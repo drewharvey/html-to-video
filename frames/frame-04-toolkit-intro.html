@@ -1,0 +1,66 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F04 — Toolkit Introduction</title>
+<style>
+/* Shared theme variables for all frames */
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #1f1f1f; --surface3: #272727;
+  --border: #272727; --border2: #3f3f3f; --text: #e4e4e7; --muted: #8c8c8c;
+  --accent: #056ff0; --accent-dim: #056ff022; --green: #22c55e; --green-dim: #22c55e22;
+  --amber: #d97706; --amber-dim: #fbbf2422; --red: #f87171; --red-dim: #f8717122;
+  --shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+[data-theme="light"] {
+  --bg: #f2f2f2; --surface: #ffffff; --surface2: #f7f7f7; --surface3: #ebebeb;
+  --border: #d4d4d4; --border2: #c0c0c0; --text: #1a1a1a; --muted: #666666;
+  --accent: #056ff0; --accent-dim: #056ff012; --green: #16a34a; --green-dim: #16a34a12;
+  --amber: #d97706; --amber-dim: #d9770612; --red: #dc2626; --red-dim: #dc262612;
+  --shadow: 0 20px 60px rgba(0,0,0,0.08);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
+.controls {
+  position: fixed; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 100;
+}
+.ctrl-btn {
+  padding: 8px 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--muted); font-size: 12px; cursor: pointer;
+  font-family: monospace; transition: all 0.2s ease;
+}
+.ctrl-btn:hover { color: var(--text); border-color: var(--border2); }
+
+
+  .container{text-align:center}
+  .logo{font-size:42px;font-weight:700;letter-spacing:-1px;color:var(--text);opacity:0;transform:translateY(16px);animation:slideUp .7s ease .4s forwards}
+  .logo span{color:var(--accent)}
+  @keyframes slideUp{to{opacity:1;transform:translateY(0)}}
+  .divider{width:60px;height:2px;background:var(--accent);margin:32px auto;opacity:0;transform:scaleX(0);animation:grow .5s ease 1.3s forwards}
+  @keyframes grow{to{opacity:1;transform:scaleX(1)}}
+  .phases{display:flex;gap:24px;justify-content:center}
+  .phase{display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 28px;opacity:0;transform:translateY(12px)}
+  .phase:nth-child(1){animation:slideUp .5s ease 1.6s forwards}.phase:nth-child(3){animation:slideUp .5s ease 2s forwards}
+  .phase-arrow{color:var(--muted);font-size:20px;opacity:0;animation:slideUp .4s ease 1.9s forwards}
+  .phase-num{width:36px;height:36px;border-radius:50%;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;font-family:monospace}
+  .phase-title{font-size:15px;font-weight:600;color:var(--text)}
+  .glow{position:fixed;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--accent) 5%,transparent) 0%,transparent 70%);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:pulse 4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.5;transform:translate(-50%,-50%) scale(1)}50%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}}
+
+</style></head><body>
+<div class="controls"><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
+
+<div class="glow"></div>
+<div class="container">
+  <div class="logo"><span>Vaadin</span> Swing Modernization Toolkit</div>
+  <div class="divider"></div>
+  <div class="phases">
+    <div class="phase"><div class="phase-num">1</div><div class="phase-title">Browser Access</div></div>
+    <div class="phase-arrow">→</div>
+    <div class="phase"><div class="phase-num">2</div><div class="phase-title">Modernize</div></div>
+  </div>
+</div>
+
+<script>
+function toggleTheme(){const l=document.documentElement.getAttribute('data-theme')==='light';document.documentElement.setAttribute('data-theme',l?'dark':'light');document.getElementById('themeBtn').textContent=l?'☀ Light':'🌙 Dark'}
+function resetAnim(){location.reload()}
+function startAnim(){resetAnim()}
+window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
+
+</script></body></html>

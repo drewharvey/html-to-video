@@ -1,0 +1,93 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F07 — Hybrid State</title>
+<style>
+/* Shared theme variables for all frames */
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #1f1f1f; --surface3: #272727;
+  --border: #272727; --border2: #3f3f3f; --text: #e4e4e7; --muted: #8c8c8c;
+  --accent: #056ff0; --accent-dim: #056ff022; --green: #22c55e; --green-dim: #22c55e22;
+  --amber: #d97706; --amber-dim: #fbbf2422; --red: #f87171; --red-dim: #f8717122;
+  --shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+[data-theme="light"] {
+  --bg: #f2f2f2; --surface: #ffffff; --surface2: #f7f7f7; --surface3: #ebebeb;
+  --border: #d4d4d4; --border2: #c0c0c0; --text: #1a1a1a; --muted: #666666;
+  --accent: #056ff0; --accent-dim: #056ff012; --green: #16a34a; --green-dim: #16a34a12;
+  --amber: #d97706; --amber-dim: #d9770612; --red: #dc2626; --red-dim: #dc262612;
+  --shadow: 0 20px 60px rgba(0,0,0,0.08);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
+.controls {
+  position: fixed; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 100;
+}
+.ctrl-btn {
+  padding: 8px 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--muted); font-size: 12px; cursor: pointer;
+  font-family: monospace; transition: all 0.2s ease;
+}
+.ctrl-btn:hover { color: var(--text); border-color: var(--border2); }
+
+
+  .browser{width:680px;background:var(--surface);border-radius:10px;overflow:hidden;box-shadow:var(--shadow);opacity:0;animation:fadeIn .6s ease .3s forwards}
+  @keyframes fadeIn{to{opacity:1}}
+  .bc{background:var(--surface3);padding:10px 14px;display:flex;align-items:center;gap:12px}
+  .dots{display:flex;gap:5px}.dot{width:10px;height:10px;border-radius:50%}.dot.r{background:var(--red);opacity:.7}.dot.y{background:var(--amber);opacity:.7}.dot.g{background:var(--green);opacity:.7}
+  .tab{padding:6px 16px;font-size:11px;color:var(--text);background:var(--surface2);border-radius:6px 6px 0 0}
+  .url{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:7px 16px;margin:0 14px 8px;font-family:monospace;font-size:12px;color:var(--muted)}.url span{color:var(--text)}
+  .body{display:grid;grid-template-columns:130px 1fr;min-height:320px;border-top:1px solid var(--border)}
+  .sidebar{border-right:1px solid var(--border);padding:8px 0;background:var(--surface2)}
+  .si{padding:8px 14px;font-size:11px;color:var(--muted)}.si.active{background:var(--surface3);color:var(--text);border-left:2px solid var(--accent)}
+  .tag{display:inline-block;font-size:8px;padding:1px 5px;border-radius:3px;margin-left:4px;font-family:monospace;text-transform:uppercase;vertical-align:middle}
+  .tag.sw{background:var(--amber-dim);color:var(--amber)}.tag.nw{background:var(--green-dim);color:var(--green)}
+  .mc{position:relative;overflow:hidden}
+  .swing-view{position:absolute;top:0;left:0;right:0;bottom:0;padding:12px;transition:transform .8s cubic-bezier(.4,0,.2,1),opacity .6s}.swing-view.exit{transform:translateX(-100%);opacity:0}
+  .st{width:100%;border-collapse:collapse}.st th{background:var(--surface3);padding:6px 8px;text-align:left;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border)}.st td{padding:6px 8px;font-size:11px;color:var(--text);font-family:monospace;border-bottom:1px solid var(--surface2)}
+  .modern-view{position:absolute;top:0;left:0;right:0;bottom:0;padding:20px;transform:translateX(100%);opacity:0;transition:transform .8s cubic-bezier(.4,0,.2,1),opacity .6s;background:var(--surface2)}
+  .modern-view.enter{transform:translateX(0);opacity:1}
+  .mh{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.mt{font-size:18px;font-weight:600;color:var(--text)}.mb{padding:8px 16px;background:var(--accent);color:white;border:none;border-radius:8px;font-size:12px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px}.cl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}.cv{font-size:22px;font-weight:700;color:var(--text);margin-top:4px}.cv.green{color:var(--green)}
+  .mt2{width:100%;border-collapse:collapse}.mt2 th{padding:8px 10px;text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)}.mt2 td{padding:10px;font-size:12px;color:var(--text);border-bottom:1px solid var(--surface2)}
+  .pill{padding:3px 10px;border-radius:12px;font-size:10px}.pill.a{background:var(--green-dim);color:var(--green)}.pill.rv{background:var(--amber-dim);color:var(--amber)}
+  .badge{position:absolute;top:10px;right:10px;font-size:9px;padding:4px 10px;border-radius:4px;font-family:monospace;text-transform:uppercase;letter-spacing:.5px;opacity:0;transition:opacity .4s}.badge.visible{opacity:1}
+  .badge.sw{background:var(--amber-dim);color:var(--amber)}.badge.vd{background:var(--green-dim);color:var(--green)}
+
+</style></head><body>
+<div class="controls"><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
+
+<div class="browser">
+  <div class="bc"><div class="dots"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div><div class="tab">Inventory Manager</div></div>
+  <div class="url">🔒 https://<span>app.yourcompany.com</span>/inventory</div>
+  <div class="body">
+    <div class="sidebar">
+      <div class="si active" id="nav">Inventory <span class="tag sw" id="navTag">Swing</span></div>
+      <div class="si">Orders <span class="tag sw">Swing</span></div>
+      <div class="si">Suppliers <span class="tag sw">Swing</span></div>
+      <div class="si">Reports <span class="tag sw">Swing</span></div>
+    </div>
+    <div class="mc">
+      <div class="badge sw" id="swBadge">Swing View</div>
+      <div class="badge vd" id="vdBadge">Vaadin Flow View</div>
+      <div class="swing-view" id="sv">
+        <table class="st"><thead><tr><th>ID</th><th>Product</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead>
+        <tbody><tr><td>1041</td><td>Industrial Valve A-7</td><td>340</td><td>$127.50</td><td>Active</td></tr><tr><td>1042</td><td>Pressure Gauge B-3</td><td>128</td><td>$84.00</td><td>Active</td></tr><tr><td>1043</td><td>Control Module C-1</td><td>57</td><td>$312.00</td><td>Review</td></tr><tr><td>1044</td><td>Hydraulic Pump D-9</td><td>812</td><td>$445.75</td><td>Active</td></tr><tr><td>1045</td><td>Thermal Sensor E-2</td><td>96</td><td>$63.20</td><td>Pending</td></tr></tbody></table>
+      </div>
+      <div class="modern-view" id="mv">
+        <div class="mh"><div class="mt">Inventory</div><div class="mb">+ New Item</div></div>
+        <div class="cards"><div class="card"><div class="cl">Total Items</div><div class="cv">1,648</div></div><div class="card"><div class="cl">Active</div><div class="cv green">1,591</div></div><div class="card"><div class="cl">In Review</div><div class="cv">57</div></div></div>
+        <table class="mt2"><thead><tr><th>Product</th><th>Quantity</th><th>Price</th><th>Status</th></tr></thead>
+        <tbody><tr><td>Industrial Valve A-7</td><td>340</td><td>$127.50</td><td><span class="pill a">Active</span></td></tr><tr><td>Pressure Gauge B-3</td><td>128</td><td>$84.00</td><td><span class="pill a">Active</span></td></tr><tr><td>Control Module C-1</td><td>57</td><td>$312.00</td><td><span class="pill rv">Review</span></td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleTheme(){const l=document.documentElement.getAttribute('data-theme')==='light';document.documentElement.setAttribute('data-theme',l?'dark':'light');document.getElementById('themeBtn').textContent=l?'☀ Light':'🌙 Dark'}
+function resetAnim(){location.reload()}
+function startAnim(){resetAnim()}
+window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
+
+setTimeout(()=>{document.getElementById('swBadge').classList.add('visible')},1000);
+setTimeout(()=>{document.getElementById('swBadge').classList.remove('visible');setTimeout(()=>{document.getElementById('sv').classList.add('exit');document.getElementById('mv').classList.add('enter');document.getElementById('vdBadge').classList.add('visible');document.getElementById('navTag').textContent='New';document.getElementById('navTag').className='tag nw'},300)},3500);
+
+</script></body></html>

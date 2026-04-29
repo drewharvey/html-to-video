@@ -1,0 +1,68 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F08 — Time-lapse</title>
+<style>
+/* Shared theme variables for all frames */
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #1f1f1f; --surface3: #272727;
+  --border: #272727; --border2: #3f3f3f; --text: #e4e4e7; --muted: #8c8c8c;
+  --accent: #056ff0; --accent-dim: #056ff022; --green: #22c55e; --green-dim: #22c55e22;
+  --amber: #d97706; --amber-dim: #fbbf2422; --red: #f87171; --red-dim: #f8717122;
+  --shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+[data-theme="light"] {
+  --bg: #f2f2f2; --surface: #ffffff; --surface2: #f7f7f7; --surface3: #ebebeb;
+  --border: #d4d4d4; --border2: #c0c0c0; --text: #1a1a1a; --muted: #666666;
+  --accent: #056ff0; --accent-dim: #056ff012; --green: #16a34a; --green-dim: #16a34a12;
+  --amber: #d97706; --amber-dim: #d9770612; --red: #dc2626; --red-dim: #dc262612;
+  --shadow: 0 20px 60px rgba(0,0,0,0.08);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
+.controls {
+  position: fixed; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 100;
+}
+.ctrl-btn {
+  padding: 8px 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--muted); font-size: 12px; cursor: pointer;
+  font-family: monospace; transition: all 0.2s ease;
+}
+.ctrl-btn:hover { color: var(--text); border-color: var(--border2); }
+
+
+  .container{width:600px;text-align:center}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,1fr);gap:6px;width:340px;height:220px;margin:0 auto 20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px}
+  .cell{border-radius:4px;transition:background .6s}
+  .cell.legacy{background:var(--surface3)}.cell.modern{background:var(--accent);box-shadow:0 0 12px color-mix(in srgb,var(--accent) 20%,transparent)}
+  .counter{font-family:monospace;font-size:32px;font-weight:700;color:var(--accent);margin-bottom:6px;opacity:0;transition:opacity .3s}.counter.visible{opacity:1}
+  .bar{width:340px;height:8px;background:var(--surface3);border-radius:4px;margin:0 auto 8px;overflow:hidden}
+  .bar-fill{height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width .8s}
+  .labels{display:flex;justify-content:space-between;width:340px;margin:0 auto;font-family:monospace;font-size:10px;color:var(--muted)}
+  .legend{display:flex;gap:24px;justify-content:center;margin-top:16px}
+  .li{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted)}
+  .ld{width:10px;height:10px;border-radius:3px}.ld.l{background:var(--surface3)}.ld.m{background:var(--accent)}
+  .done{font-family:monospace;font-size:11px;color:var(--green);margin-top:16px;opacity:0;transition:opacity .4s}.done.visible{opacity:1}
+
+</style></head><body>
+<div class="controls"><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
+
+<div class="container">
+  <div class="counter" id="ctr">0%</div>
+  <div class="grid" id="grid"></div>
+  <div class="bar"><div class="bar-fill" id="bf"></div></div>
+  <div class="labels"><span>Start</span><span>Complete</span></div>
+  <div class="legend"><div class="li"><div class="ld l"></div>Legacy Swing</div><div class="li"><div class="ld m"></div>Vaadin Flow</div></div>
+  <div class="done" id="done">✓ Migration Complete</div>
+</div>
+
+<script>
+function toggleTheme(){const l=document.documentElement.getAttribute('data-theme')==='light';document.documentElement.setAttribute('data-theme',l?'dark':'light');document.getElementById('themeBtn').textContent=l?'☀ Light':'🌙 Dark'}
+function resetAnim(){location.reload()}
+function startAnim(){resetAnim()}
+window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
+
+const g=document.getElementById('grid'),ctr=document.getElementById('ctr'),bf=document.getElementById('bf');
+const cells=[];for(let i=0;i<12;i++){const c=document.createElement('div');c.className='cell legacy';g.appendChild(c);cells.push(c)}
+const order=[0,4,8,1,5,2,9,6,10,3,7,11];let m=0;
+setTimeout(()=>{ctr.classList.add('visible')},500);
+order.forEach((ci,step)=>{setTimeout(()=>{cells[ci].classList.replace('legacy','modern');m++;const p=Math.round(m/12*100);ctr.textContent=p+'%';bf.style.width=p+'%';if(p===100){ctr.style.color='var(--green)';document.getElementById('done').classList.add('visible')}},1200+step*500)});
+
+</script></body></html>

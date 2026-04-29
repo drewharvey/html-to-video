@@ -1,0 +1,73 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F03 — The Rewrite Trap</title>
+<style>
+/* Shared theme variables for all frames */
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #1f1f1f; --surface3: #272727;
+  --border: #272727; --border2: #3f3f3f; --text: #e4e4e7; --muted: #8c8c8c;
+  --accent: #056ff0; --accent-dim: #056ff022; --green: #22c55e; --green-dim: #22c55e22;
+  --amber: #d97706; --amber-dim: #fbbf2422; --red: #f87171; --red-dim: #f8717122;
+  --shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+[data-theme="light"] {
+  --bg: #f2f2f2; --surface: #ffffff; --surface2: #f7f7f7; --surface3: #ebebeb;
+  --border: #d4d4d4; --border2: #c0c0c0; --text: #1a1a1a; --muted: #666666;
+  --accent: #056ff0; --accent-dim: #056ff012; --green: #16a34a; --green-dim: #16a34a12;
+  --amber: #d97706; --amber-dim: #d9770612; --red: #dc2626; --red-dim: #dc262612;
+  --shadow: 0 20px 60px rgba(0,0,0,0.08);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
+.controls {
+  position: fixed; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 100;
+}
+.ctrl-btn {
+  padding: 8px 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--muted); font-size: 12px; cursor: pointer;
+  font-family: monospace; transition: all 0.2s ease;
+}
+.ctrl-btn:hover { color: var(--text); border-color: var(--border2); }
+
+
+  .scene{width:600px;opacity:0;animation:fadeIn .6s ease .3s forwards}
+  @keyframes fadeIn{to{opacity:1}}
+  .track{position:relative;height:6px;background:var(--surface3);border-radius:3px;margin:60px 0 40px;overflow:visible}
+  .fill{position:absolute;top:0;left:0;height:100%;border-radius:3px;width:0%;background:var(--green);transition:width .3s linear,background .5s}
+  .start-marker{position:absolute;left:0;top:-28px;font-family:monospace;font-size:11px;color:var(--muted)}
+  .end-marker{position:absolute;top:-32px;display:flex;flex-direction:column;align-items:center;transition:left 1.5s ease-in-out}
+  .end-label{font-family:monospace;font-size:11px;color:var(--text);white-space:nowrap;margin-bottom:6px;transition:color .5s}
+  .end-tick{width:2px;height:16px;background:var(--text);border-radius:1px;transition:background .5s}
+  .end-tick-bot{position:absolute;top:100%;width:2px;height:10px;background:var(--text);border-radius:1px;transition:background .5s}
+  .now-dot{position:absolute;top:50%;transform:translateY(-50%);width:14px;height:14px;border-radius:50%;background:var(--green);border:2px solid var(--bg);box-shadow:0 0 0 2px var(--green);transition:left .3s linear,background .5s,box-shadow .5s;z-index:2}
+  .years{display:flex;justify-content:space-between;font-family:monospace;font-size:10px;color:var(--muted);opacity:.5}
+
+</style></head><body>
+<div class="controls"><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
+
+<div class="scene">
+  <div class="track">
+    <div class="fill" id="fill"></div>
+    <div class="now-dot" id="dot" style="left:0%"></div>
+    <div class="start-marker">Start</div>
+    <div class="end-marker" id="em" style="left:70%">
+      <div class="end-label" id="el">Est. completion</div>
+      <div class="end-tick"></div>
+      <div class="end-tick-bot"></div>
+    </div>
+  </div>
+  <div class="years"><span>Year 1</span><span>Year 2</span><span>Year 3</span><span>Year 4</span><span>Year 5+</span></div>
+</div>
+
+<script>
+function toggleTheme(){const l=document.documentElement.getAttribute('data-theme')==='light';document.documentElement.setAttribute('data-theme',l?'dark':'light');document.getElementById('themeBtn').textContent=l?'☀ Light':'🌙 Dark'}
+function resetAnim(){location.reload()}
+function startAnim(){resetAnim()}
+window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
+
+const fill=document.getElementById('fill'),dot=document.getElementById('dot'),em=document.getElementById('em'),el=document.getElementById('el');
+function uf(p){fill.style.width=p+'%';dot.style.left=p+'%'}
+let progress=0,phase=0;
+setTimeout(()=>{phase=1;const iv=setInterval(()=>{if(phase!==1){clearInterval(iv);return}progress+=.4;if(progress>=25){progress=25;clearInterval(iv);phase=2;p2()}uf(progress)},50)},800);
+function p2(){fill.style.background='var(--amber)';dot.style.background='var(--amber)';dot.style.boxShadow='0 0 0 2px var(--amber)';el.textContent='Est. completion (revised)';setTimeout(()=>{em.style.left='85%'},200);const iv=setInterval(()=>{if(phase!==2){clearInterval(iv);return}progress+=.15;if(progress>=32){progress=32;clearInterval(iv);phase=3;p3()}uf(progress)},80)}
+function p3(){fill.style.background='var(--red)';dot.style.background='var(--red)';dot.style.boxShadow='0 0 0 2px var(--red)';el.style.color='var(--red)';el.textContent='Est. completion (???)';setTimeout(()=>{em.style.left='110%'},200);const iv=setInterval(()=>{if(phase!==3){clearInterval(iv);return}progress+=.05;if(progress>=35){progress=35;clearInterval(iv)}uf(progress)},100)}
+
+</script></body></html>

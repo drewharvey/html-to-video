@@ -1,0 +1,88 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F11 — Before / After</title>
+<style>
+/* Shared theme variables for all frames */
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #1f1f1f; --surface3: #272727;
+  --border: #272727; --border2: #3f3f3f; --text: #e4e4e7; --muted: #8c8c8c;
+  --accent: #056ff0; --accent-dim: #056ff022; --green: #22c55e; --green-dim: #22c55e22;
+  --amber: #d97706; --amber-dim: #fbbf2422; --red: #f87171; --red-dim: #f8717122;
+  --shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+[data-theme="light"] {
+  --bg: #f2f2f2; --surface: #ffffff; --surface2: #f7f7f7; --surface3: #ebebeb;
+  --border: #d4d4d4; --border2: #c0c0c0; --text: #1a1a1a; --muted: #666666;
+  --accent: #056ff0; --accent-dim: #056ff012; --green: #16a34a; --green-dim: #16a34a12;
+  --amber: #d97706; --amber-dim: #d9770612; --red: #dc2626; --red-dim: #dc262612;
+  --shadow: 0 20px 60px rgba(0,0,0,0.08);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
+.controls {
+  position: fixed; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 100;
+}
+.ctrl-btn {
+  padding: 8px 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--muted); font-size: 12px; cursor: pointer;
+  font-family: monospace; transition: all 0.2s ease;
+}
+.ctrl-btn:hover { color: var(--text); border-color: var(--border2); }
+
+
+  .container{display:flex;align-items:center;gap:32px}
+  .panel{width:310px;border-radius:10px;overflow:hidden;box-shadow:var(--shadow);opacity:0;transform:translateY(16px)}
+  .panel.before{animation:slideUp .6s ease .5s forwards}.panel.after{animation:slideUp .6s ease 1.8s forwards}
+  @keyframes slideUp{to{opacity:1;transform:translateY(0)}}
+  .pl{padding:10px 16px;font-family:monospace;font-size:11px;text-transform:uppercase;letter-spacing:1px;text-align:center;border-bottom:1px solid var(--border)}
+  .panel.before .pl{background:var(--amber-dim);color:var(--amber)}.panel.after .pl{background:var(--green-dim);color:var(--green)}
+  .sc{background:var(--surface);min-height:260px}
+  .sm{background:var(--surface2);padding:4px 8px;display:flex;gap:2px;border-bottom:1px solid var(--border)}.smi{padding:3px 8px;font-size:10px;color:var(--muted)}
+  .stb{background:var(--surface2);padding:4px 8px;display:flex;gap:4px;border-bottom:1px solid var(--border)}.sb{padding:2px 8px;font-size:9px;color:var(--muted);background:var(--surface3);border:1px solid var(--border2);border-radius:3px}
+  .st{width:100%;border-collapse:collapse}.st th{background:var(--surface3);padding:5px 6px;font-size:9px;color:var(--muted);text-align:left;font-weight:600;border-bottom:1px solid var(--border)}.st td{padding:5px 6px;font-size:9px;color:var(--text);font-family:monospace;border-bottom:1px solid var(--surface2)}
+  .mc{background:var(--surface2);min-height:260px;padding:14px}
+  .mh{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.mt{font-size:14px;font-weight:600;color:var(--text)}.mb{padding:5px 12px;background:var(--accent);color:white;border-radius:6px;font-size:10px}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}.card{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px}.cl{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}.cv{font-size:16px;font-weight:700;color:var(--text);margin-top:2px}.cv.green{color:var(--green)}
+  .mt2{width:100%;border-collapse:collapse}.mt2 th{padding:6px 8px;text-align:left;font-size:9px;color:var(--muted);border-bottom:1px solid var(--border)}.mt2 td{padding:6px 8px;font-size:10px;color:var(--text);border-bottom:1px solid var(--surface2)}
+  .pill{padding:2px 8px;border-radius:10px;font-size:8px}.pill.a{background:var(--green-dim);color:var(--green)}
+  .arrow{display:flex;flex-direction:column;align-items:center;gap:8px;opacity:0;animation:fadeIn .5s ease 2.8s forwards}
+  @keyframes fadeIn{to{opacity:1}}
+  .arrow-line{width:40px;height:2px;background:var(--green);position:relative}.arrow-line::after{content:'';position:absolute;right:-4px;top:-5px;border:6px solid transparent;border-left:8px solid var(--green)}
+  .wrapper{display:flex;flex-direction:column;align-items:center;gap:20px}
+  .logic-bar{width:100%;max-width:690px;background:var(--surface);border:2px solid var(--accent);border-radius:10px;padding:14px 24px;text-align:center;opacity:0;transform:translateY(10px);animation:slideUp .5s ease 3.2s forwards}
+  @keyframes slideUp{to{opacity:1;transform:translateY(0)}}
+  .logic-text{font-family:monospace;font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:2px}
+
+</style></head><body>
+<div class="controls"><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
+
+<div class="wrapper">
+  <div class="container">
+    <div class="panel before">
+      <div class="pl">Before</div>
+      <div class="sc">
+        <div class="sm"><div class="smi">File</div><div class="smi">Edit</div><div class="smi">View</div><div class="smi">Tools</div></div>
+        <div class="stb"><div class="sb">Refresh</div><div class="sb">New</div><div class="sb">Export</div></div>
+        <table class="st"><thead><tr><th>ID</th><th>Product</th><th>Qty</th><th>Status</th></tr></thead><tbody><tr><td>1041</td><td>Valve A-7</td><td>340</td><td>Active</td></tr><tr><td>1042</td><td>Gauge B-3</td><td>128</td><td>Active</td></tr><tr><td>1043</td><td>Module C-1</td><td>57</td><td>Review</td></tr><tr><td>1044</td><td>Pump D-9</td><td>812</td><td>Active</td></tr><tr><td>1045</td><td>Sensor E-2</td><td>96</td><td>Pending</td></tr></tbody></table>
+      </div>
+    </div>
+    <div class="arrow"><div class="arrow-line"></div></div>
+    <div class="panel after">
+      <div class="pl">After</div>
+      <div class="mc">
+        <div class="mh"><div class="mt">Inventory</div><div class="mb">+ New Item</div></div>
+        <div class="cards"><div class="card"><div class="cl">Total Items</div><div class="cv">1,648</div></div><div class="card"><div class="cl">Active</div><div class="cv green">1,591</div></div></div>
+        <table class="mt2"><thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead><tbody><tr><td>Valve A-7</td><td>340</td><td>$127.50</td><td><span class="pill a">Active</span></td></tr><tr><td>Gauge B-3</td><td>128</td><td>$84.00</td><td><span class="pill a">Active</span></td></tr><tr><td>Module C-1</td><td>57</td><td>$312.00</td><td><span class="pill a">Active</span></td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+  <div class="logic-bar">
+    <span class="logic-text">Business Logic</span>
+  </div>
+</div>
+
+<script>
+function toggleTheme(){const l=document.documentElement.getAttribute('data-theme')==='light';document.documentElement.setAttribute('data-theme',l?'dark':'light');document.getElementById('themeBtn').textContent=l?'☀ Light':'🌙 Dark'}
+function resetAnim(){location.reload()}
+function startAnim(){resetAnim()}
+window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
+
+</script></body></html>

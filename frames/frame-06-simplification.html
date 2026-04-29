@@ -1,0 +1,65 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F06 — Simplification</title>
+<style>
+/* Shared theme variables for all frames */
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #1f1f1f; --surface3: #272727;
+  --border: #272727; --border2: #3f3f3f; --text: #e4e4e7; --muted: #8c8c8c;
+  --accent: #056ff0; --accent-dim: #056ff022; --green: #22c55e; --green-dim: #22c55e22;
+  --amber: #d97706; --amber-dim: #fbbf2422; --red: #f87171; --red-dim: #f8717122;
+  --shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+[data-theme="light"] {
+  --bg: #f2f2f2; --surface: #ffffff; --surface2: #f7f7f7; --surface3: #ebebeb;
+  --border: #d4d4d4; --border2: #c0c0c0; --text: #1a1a1a; --muted: #666666;
+  --accent: #056ff0; --accent-dim: #056ff012; --green: #16a34a; --green-dim: #16a34a12;
+  --amber: #d97706; --amber-dim: #d9770612; --red: #dc2626; --red-dim: #dc262612;
+  --shadow: 0 20px 60px rgba(0,0,0,0.08);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
+.controls {
+  position: fixed; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 100;
+}
+.ctrl-btn {
+  padding: 8px 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--muted); font-size: 12px; cursor: pointer;
+  font-family: monospace; transition: all 0.2s ease;
+}
+.ctrl-btn:hover { color: var(--text); border-color: var(--border2); }
+
+
+  .scene{position:relative;width:700px;height:400px}
+  .desktop{position:absolute;display:flex;flex-direction:column;align-items:center;gap:6px;transition:all 1.2s cubic-bezier(.4,0,.2,1);opacity:1}
+  .desktop.collapsed{opacity:0;transform:scale(0)!important}
+  .monitor{width:56px;height:40px;border:2px solid var(--border);border-radius:4px;display:flex;align-items:center;justify-content:center;background:var(--surface);font-size:16px;position:relative}
+  .monitor::after{content:'';position:absolute;bottom:-8px;width:20px;height:4px;background:var(--border);border-radius:0 0 2px 2px}
+  .desktop.ok .monitor{border-color:var(--green)}.desktop.fail .monitor{border-color:var(--red)}.desktop.warn .monitor{border-color:var(--amber)}
+  .pc-label{font-family:monospace;font-size:9px;color:var(--muted)}
+  .server-result{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(0);text-align:center;transition:transform .6s cubic-bezier(.34,1.56,.64,1),opacity .4s;opacity:0}
+  .server-result.visible{transform:translate(-50%,-50%) scale(1);opacity:1}
+  .server-icon{width:100px;height:100px;border:3px solid var(--green);border-radius:20px;background:var(--green-dim);display:flex;align-items:center;justify-content:center;font-size:40px;margin:0 auto 16px}
+  .server-label{font-size:16px;font-weight:600;color:var(--text)}
+  .server-sub{font-family:monospace;font-size:12px;color:var(--green)}
+
+</style></head><body>
+<div class="controls"><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
+
+<div class="scene" id="scene">
+  <div class="server-result" id="server"><div class="server-icon">☁</div><div class="server-label">One deployment. Every user.</div><div class="server-sub">app.yourcompany.com</div></div>
+</div>
+
+<script>
+function toggleTheme(){const l=document.documentElement.getAttribute('data-theme')==='light';document.documentElement.setAttribute('data-theme',l?'dark':'light');document.getElementById('themeBtn').textContent=l?'☀ Light':'🌙 Dark'}
+function resetAnim(){location.reload()}
+function startAnim(){resetAnim()}
+window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
+
+const scene=document.getElementById('scene');
+const pos=[{x:80,y:40},{x:200,y:40},{x:320,y:40},{x:440,y:40},{x:560,y:40},{x:80,y:150},{x:200,y:150},{x:320,y:150},{x:440,y:150},{x:560,y:150},{x:80,y:260},{x:200,y:260},{x:320,y:260},{x:440,y:260},{x:560,y:260}];
+const st=['ok','ok','fail','ok','warn','ok','fail','ok','ok','fail','ok','ok','warn','ok','fail'];
+const ic={ok:'✓',fail:'✗',warn:'⚠'},cl={ok:'var(--green)',fail:'var(--red)',warn:'var(--amber)'};
+const ds=[];
+pos.forEach((p,i)=>{const e=document.createElement('div');e.className='desktop '+st[i];e.style.cssText='left:'+p.x+'px;top:'+p.y+'px;opacity:0';e.innerHTML='<div class="monitor"><span style="color:'+cl[st[i]]+'">'+ic[st[i]]+'</span></div><span class="pc-label">WS-'+String(i+1).padStart(3,'0')+'</span>';scene.appendChild(e);ds.push(e);setTimeout(()=>{e.style.transition='opacity .3s';e.style.opacity='1'},200+i*60)});
+setTimeout(()=>{ds.forEach(e=>{e.style.left='320px';e.style.top='160px'});setTimeout(()=>{ds.forEach((e,i)=>{setTimeout(()=>{e.classList.add('collapsed')},i*30)});setTimeout(()=>{document.getElementById('server').classList.add('visible')},600)},1300)},2500);
+
+</script></body></html>
