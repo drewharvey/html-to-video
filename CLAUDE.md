@@ -64,7 +64,7 @@ npx playwright install chromium
 
 ## Test fixture for fast iteration
 
-`demo/sync-test.html` is a 1.5-second, low-resolution-friendly fixture with two parallel bars:
+`tests/sync-test.html` is a 1.5-second, low-resolution-friendly fixture with two parallel bars:
 - Top: CSS `transition: width 1s linear` (green)
 - Bottom: JS `setInterval` writing `width = X%` (blue)
 
@@ -72,7 +72,7 @@ If they fill in lockstep, synchronization is working. Inspect by exporting to MP
 
 Quick run (low-res, ~15 s wall time at the default 10× slowdown):
 ```
-node cli.js export demo/sync-test.html --width 640 --height 360 --scale 1
+node cli.js export tests/sync-test.html --width 640 --height 360 --scale 1
 ffmpeg -y -i output/sync-test.mp4 -ss 0.5 -frames:v 1 /tmp/mid.png
 ```
 Both bars should read ~50 % at the midpoint (0.5 s into the 1.5 s clip). At 1.0 s both should be at 100 % (the animation completes by then; the last 0.5 s shows the settled state).

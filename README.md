@@ -184,6 +184,7 @@ Environment variables:
 
 ---
 
-## Demo
+## Demo & tests
 
-- **`demo/`** — 12-animation Vaadin Swing Modernization Toolkit storyboard set up to exercise all three usage modes (single file / directory / bundle). See [`demo/README.md`](demo/README.md) for the smoke-test commands.
+- **[`demo/`](demo/)** — 12-animation Vaadin Swing Modernization Toolkit storyboard set up to exercise all three usage modes (single file / directory / bundle).
+- **[`tests/`](tests/)** — minimal correctness fixtures, currently a single `sync-test.html` for verifying that the recorder keeps CSS- and JS-driven animations in lockstep.

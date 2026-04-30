@@ -50,15 +50,9 @@ h2v review demo/animations/   # all 12 standalones in one page
 h2v review demo/bundle.html   # same content, sourced from the bundle
 ```
 
-## Fast sync test
+## Looking for the sync test?
 
-`demo/sync-test.html` is a 1.5-second fixture with two parallel bars (one CSS transition, one JS `setInterval`) that should fill in lockstep. Use it to verify a full export end-to-end without waiting for one of the longer animations:
-
-```
-h2v export demo/sync-test.html --width 640 --height 360 --scale 1
-```
-
-At the default 10× slowdown this records in ~15 s. Open the resulting MP4 (or extract a frame with `ffmpeg -i output/sync-test.mp4 -ss 0.5 -frames:v 1 mid.png`) and check that the green bar (CSS) and blue bar (JS) match each other at the same percentage. If the green bar finishes early, JS-vs-CSS time has desynced.
+If you want the minimal fast fixture for verifying the recorder's CSS/JS timing, that lives in [`tests/sync-test.html`](../tests/) — it's not really demo content.
 
 ## How the durations are configured
 
