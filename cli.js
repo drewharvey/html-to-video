@@ -559,6 +559,13 @@ async function recordJob(browser, job, opts, capturesRoot) {
       );
     }
 
+    await page.evaluate(() =>
+      document.documentElement.setAttribute('data-h2v-recording', '')
+    );
+    await page.addStyleTag({
+      content: '[data-h2v-hide]{display:none!important}',
+    });
+
     const captureDir = path.join(capturesRoot, job.captureKey);
     fs.rmSync(captureDir, { recursive: true, force: true });
     fs.mkdirSync(captureDir, { recursive: true });

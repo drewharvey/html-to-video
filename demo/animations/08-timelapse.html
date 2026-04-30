@@ -42,7 +42,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
   .done{font-family:monospace;font-size:11px;color:var(--green);margin-top:16px;opacity:0;transition:opacity .4s}.done.visible{opacity:1}
 
 </style><meta name="h2v-duration" content="10s"></head><body>
-<div class="controls"><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
+<div class="controls" data-h2v-hide><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
 
 <div class="container">
   <div class="counter" id="ctr">0%</div>

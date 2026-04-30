@@ -131,6 +131,38 @@ If the cleanup step fails (file in use, permissions, etc.), `h2v` prints a warni
 
 ---
 
+## Hiding UI controls during recording
+
+Animations often include on-page affordances — a Reset button, a theme toggle, a Replay control — that you want visible while authoring but **not** in the recorded MP4. h2v gives the page two hooks for this.
+
+**The common case: mark controls with `data-h2v-hide`.** During recording, h2v injects a stylesheet that hides any element carrying this attribute. Group controls in one container or mark them individually:
+
+```html
+<div data-h2v-hide class="controls">
+  <button id="reset">Reset</button>
+  <button id="theme">☀ Light</button>
+</div>
+```
+
+No CSS or JS in the page is required — the hiding rule is injected by h2v at recording time and isn't present otherwise, so the controls remain interactive when you open the file in a normal browser.
+
+**The advanced case: react to `data-h2v-recording`.** During recording, h2v also sets `data-h2v-recording` (no value) on `<html>`. Use this if you need to do more than hide an element — for example, suppress a debug overlay, snap something to its final position, or alter layout:
+
+```css
+html[data-h2v-recording] .debug-fps { display: none; }
+html[data-h2v-recording] .stage { padding: 0; }
+```
+
+```js
+if (document.documentElement.hasAttribute('data-h2v-recording')) {
+  // recording — skip ambient idle animation
+}
+```
+
+Neither attribute is set during `h2v review` — review is for inspection, so controls stay visible there.
+
+---
+
 ## Setting per-file duration
 
 For a **single-file animation**, h2v needs to know how long to record. In priority order:

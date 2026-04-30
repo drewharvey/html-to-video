@@ -108,6 +108,7 @@ demo/                           # smoke-test fixtures for the three usage modes
 - Output paths: `output/<basename>.mp4` for single files, `output/<bundle>/<animation-id>.mp4` for bundles.
 - The `--theme dark|light|both` flag and `-light` filename suffix convention.
 - The skip rules in directory mode: dotfiles and `review.html`. Directory listing is non-recursive, so subdirectories like `output/` or `node_modules/` aren't entered automatically. Explicitly named file args bypass these filters.
+- The `data-h2v-recording` attribute on `<html>` and the injected `[data-h2v-hide]{display:none!important}` stylesheet, both applied after navigation in `recordJob`. Pages and the upcoming animation-creation skill rely on these names — renaming them is a breaking change. Only set during `export`, not during `review` (review is for human inspection, controls should stay visible).
 
 ## Operational notes
 
