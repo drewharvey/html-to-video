@@ -90,14 +90,13 @@ The 12 animations exist in two forms (`bundle.html` markers and individual files
 ## Codebase shape
 
 ```
-cli.js                          # ~700 lines, one file, only dep is puppeteer
+cli.js                          # one file, only dep is puppeteer
 package.json                    # bin: { h2v, html-to-video } → cli.js
 README.md                       # user-facing docs
 demo/                           # smoke-test fixtures for the three usage modes
   bundle.html                   # 12-animation bundle with ANIMATION_START markers
   animations/                   # the same 12 animations as standalone files
                                 # (each with <meta name="h2v-duration">)
-  review.html                   # gitignored; foundation for an upcoming feature
   README.md
 .gitignore                      # node_modules, output, captures, review.html, .DS_Store
 ```
@@ -109,7 +108,7 @@ demo/                           # smoke-test fixtures for the three usage modes
 - The review page's `</script>` escape (replacing `</` → `<\/` in the embedded JSON `ANIMATIONS = ...`). Without it, any animation containing a `</script>` tag breaks the outer page.
 - Output paths: `output/<basename>.mp4` for single files, `output/<bundle>/<animation-id>.mp4` for bundles.
 - The `--theme dark|light|both` flag and `-light` filename suffix convention.
-- The skip rules in directory mode (dotfiles, `review.html`, anything inside `output/` / `node_modules/` / `frames/`). Explicitly named file args bypass them.
+- The skip rules in directory mode: dotfiles and `review.html`. Directory listing is non-recursive, so subdirectories like `output/` or `node_modules/` aren't entered automatically. Explicitly named file args bypass these filters.
 
 ## Operational notes
 

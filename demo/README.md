@@ -41,6 +41,15 @@ Produces `output/bundle/01-established-app.mp4` … `output/bundle/12-cta.mp4` (
 
 Add `--dry-run` to any of these to preview the plan without recording.
 
+## Preview without recording
+
+`h2v review` works on the same inputs and is much faster — it builds a single HTML page with every animation embedded as an iframe, opens it in your browser, and deletes the temp file when you Ctrl-C:
+
+```
+h2v review demo/animations/   # all 12 standalones in one page
+h2v review demo/bundle.html   # same content, sourced from the bundle
+```
+
 ## How the durations are configured
 
 For the **bundle**, each animation's capture length comes from the `capture_duration` attribute on its `ANIMATION_START` marker:

@@ -8,7 +8,7 @@ yarn-error.log*
 captures/
 output/
 
-# Generated review page (rebuild via `node build-review.js`)
+# Output of `h2v review` when written to cwd (default tmpfile is unaffected)
 review.html
 
 # OS
