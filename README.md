@@ -15,12 +15,16 @@ git clone <this repo>
 cd <cloned directory>
 npm install
 npm install -g .                 # exposes `h2v` and `html-to-video` on PATH
+# or: npm link                   # symlink-based install — picks up local edits
+                                 # without reinstalling
 
 cd /path/to/your/animations
 h2v export                       # records every *.html in this dir
 ```
 
 That's it. MP4s land in `./output/`.
+
+`npm install -g .` copies the current state of the repo into your global `node_modules`. `npm link` creates a symlink from your global bin to this directory, so any edits to `cli.js` are picked up the next time you run `h2v` — useful if you plan to hack on it. Pick whichever you prefer; the uninstall steps below cover both.
 
 ---
 
