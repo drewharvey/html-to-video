@@ -30,6 +30,9 @@ const ANIMATION_BLOCK_RE =
 const ANIMATION_START_PROBE = /<!--\s*=+\s*(?:ANIMATION|FRAME)_START\b/;
 const META_DURATION_RE =
   /<meta\s+name=["']h2v-duration["']\s+content=["']?(\d+(?:\.\d+)?)\s*s?["']?\s*\/?>/i;
+const META_THEMES_RE =
+  /<meta\s+name=["']h2v-themes["']\s+content=["']([^"']*)["']\s*\/?>/i;
+const THEME_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 const ATTR_RE = /(\w+)="([^"]*)"/g;
 
 // =========================================================================
@@ -68,8 +71,17 @@ EXPORT FLAGS
                       Total recording wall time = animation duration × N.
                       Use 1 to disable (only works if screenshots fit in
                       one frame interval, ~16 ms at 60 fps).
-  --theme <m>         dark | light | both (default: dark). 'both' produces
-                      two MP4s per animation; light has a -light suffix.
+  --theme <spec>      Which theme(s) to record. The page declares its
+                      themes via <meta name="h2v-themes" content="a,b,c">
+                      (single-file) or themes="a,b,c" on bundle markers.
+                      Spec forms:
+                        <name>       record this one (must be declared)
+                        a,b,c        record this comma list
+                        all          record every declared theme
+                      With no flag, records the default theme (first
+                      declared, or no theme handling for unthemed pages).
+                      Default theme has no filename suffix; non-default
+                      themes are written as <name>-<theme>.mp4.
   --out-dir <path>    Output directory (default: ./${DEFAULTS.outDir}).
   --out <path>        Exact output filename. Only valid when exactly one
                       MP4 will be produced.
@@ -93,6 +105,12 @@ PER-FILE METADATA
   Add <meta name="h2v-duration" content="Ns"> in the <head> of a
   single-file animation to set its capture duration. The value is in
   seconds and may be an integer or a decimal.
+
+  Add <meta name="h2v-themes" content="dark,light,..."> to opt into
+  multi-theme recording. h2v sets data-theme="<name>" on <html> after
+  navigation for any non-default theme; your CSS reacts via
+  [data-theme="<name>"] selectors. The first listed theme is the
+  default (no attribute set, no filename suffix).
 
 ENVIRONMENT
   PUPPETEER_EXECUTABLE_PATH  Browser executable path. Useful when
@@ -137,7 +155,7 @@ function parseArgs(argv) {
     scale: DEFAULTS.scale,
     crf: DEFAULTS.crf,
     slowdown: DEFAULTS.slowdown,
-    themes: ['dark'],
+    themeSpec: null,
     outDir: DEFAULTS.outDir,
     outOverride: null,
     skipFfmpeg: false,
@@ -163,7 +181,7 @@ function parseArgs(argv) {
     else if (a === '--scale') opts.scale = parsePositiveInt(requireValue('--scale'), '--scale');
     else if (a === '--crf') opts.crf = parseIntInRange(requireValue('--crf'), '--crf', 0, 51);
     else if (a === '--slowdown') opts.slowdown = parsePositiveInt(requireValue('--slowdown'), '--slowdown');
-    else if (a === '--theme') opts.themes = parseThemeFlag(requireValue('--theme'));
+    else if (a === '--theme') opts.themeSpec = parseThemeFlag(requireValue('--theme'));
     else if (a === '--out-dir') opts.outDir = requireValue('--out-dir');
     else if (a === '--out') opts.outOverride = requireValue('--out');
     else if (a === '--no-ffmpeg') opts.skipFfmpeg = true;
@@ -217,11 +235,22 @@ function parseIntInRange(s, label, min, max) {
 }
 
 function parseThemeFlag(s) {
-  if (s === 'dark') return ['dark'];
-  if (s === 'light') return ['light'];
-  if (s === 'both') return ['dark', 'light'];
-  console.error(`error: --theme must be dark, light, or both (got: ${s})`);
-  process.exit(2);
+  const trimmed = String(s).trim();
+  if (trimmed === 'all') return 'all';
+  const names = trimmed.split(',').map((t) => t.trim()).filter(Boolean);
+  if (names.length === 0) {
+    console.error(`error: --theme value cannot be empty`);
+    process.exit(2);
+  }
+  for (const t of names) {
+    if (!THEME_NAME_RE.test(t)) {
+      console.error(
+        `error: invalid theme name: "${t}" (allowed: letters, digits, '-', '_')`
+      );
+      process.exit(2);
+    }
+  }
+  return names;
 }
 
 // =========================================================================
@@ -316,6 +345,7 @@ function parseBundleFrames(htmlText, sourcePath) {
       title: attrs.title || attrs.id,
       durationSeconds: parseFloat(durMatch[1]),
       html: m[2],
+      declaredThemes: parseThemeList(attrs.themes || ''),
     });
   }
   if (frames.length === 0) {
@@ -329,6 +359,50 @@ function extractMetaDuration(htmlText) {
   if (!m) return null;
   const n = parseFloat(m[1]);
   return n > 0 ? n : null;
+}
+
+function extractDeclaredThemes(htmlText) {
+  const m = htmlText.match(META_THEMES_RE);
+  if (!m) return [];
+  return parseThemeList(m[1]);
+}
+
+function parseThemeList(s) {
+  const names = String(s).split(',').map((t) => t.trim()).filter(Boolean);
+  // Dedupe while preserving order.
+  return [...new Set(names)];
+}
+
+// Returns the theme names to record for a given animation. Each entry is
+// either a string (set data-theme="<name>") or null (don't set the
+// attribute and use no filename suffix). The first declared theme is the
+// "default" — recording it normalizes to null.
+function deriveThemes(declaredThemes, themeSpec, label) {
+  const defaultTheme = declaredThemes.length > 0 ? declaredThemes[0] : null;
+  const normalize = (t) => (t === defaultTheme ? null : t);
+
+  // No flag: just the default (or null for unthemed pages).
+  if (themeSpec == null) return [null];
+
+  // --theme all: every declared theme; unthemed pages produce one MP4.
+  if (themeSpec === 'all') {
+    if (declaredThemes.length === 0) return [null];
+    return declaredThemes.map(normalize);
+  }
+
+  // Explicit name list: every requested theme must be declared.
+  const missing = themeSpec.filter((t) => !declaredThemes.includes(t));
+  if (missing.length > 0) {
+    if (declaredThemes.length === 0) {
+      throw new Error(
+        `${label}: --theme ${themeSpec.join(',')} requested but page declares no h2v-themes`
+      );
+    }
+    throw new Error(
+      `${label}: theme(s) not declared: ${missing.join(',')} (declared: ${declaredThemes.join(',')})`
+    );
+  }
+  return themeSpec.map(normalize);
 }
 
 // =========================================================================
@@ -345,7 +419,12 @@ function buildPlan(inputs, opts) {
     if (mode === 'bundle') {
       const frames = parseBundleFrames(text, inputPath);
       for (const frame of frames) {
-        for (const theme of opts.themes) {
+        const themes = deriveThemes(
+          frame.declaredThemes,
+          opts.themeSpec,
+          `${relativeToHere(inputPath)} (${frame.id})`
+        );
+        for (const theme of themes) {
           jobs.push(makeJob({
             inputPath, inputBase,
             mode: 'bundle',
@@ -359,9 +438,15 @@ function buildPlan(inputs, opts) {
       }
     } else {
       const meta = extractMetaDuration(text);
+      const declaredThemes = extractDeclaredThemes(text);
       const durationSeconds = meta != null ? meta : opts.duration;
       const durationSource = meta != null ? 'meta' : 'flag/default';
-      for (const theme of opts.themes) {
+      const themes = deriveThemes(
+        declaredThemes,
+        opts.themeSpec,
+        relativeToHere(inputPath)
+      );
+      for (const theme of themes) {
         jobs.push(makeJob({
           inputPath, inputBase,
           mode: 'single',
@@ -380,7 +465,7 @@ function buildPlan(inputs, opts) {
 
 function makeJob(j, opts) {
   const totalFrames = Math.max(1, Math.round(j.durationSeconds * opts.fps));
-  const themeSuffix = j.theme === 'light' ? '-light' : '';
+  const themeSuffix = j.theme ? '-' + j.theme : '';
   const captureKey = j.mode === 'bundle'
     ? `${j.inputBase}__${j.bundleId}${themeSuffix}`
     : `${j.inputBase}${themeSuffix}`;
@@ -389,8 +474,8 @@ function makeJob(j, opts) {
     totalFrames,
     captureKey,
     label: j.mode === 'bundle'
-      ? `[${j.inputBase}:${j.bundleId}${themeSuffix ? ' ' + j.theme : ''}]`
-      : `[${j.inputBase}${themeSuffix ? ' ' + j.theme : ''}]`,
+      ? `[${j.inputBase}:${j.bundleId}${j.theme ? ' ' + j.theme : ''}]`
+      : `[${j.inputBase}${j.theme ? ' ' + j.theme : ''}]`,
   };
 }
 
@@ -400,7 +485,7 @@ function outputPathFor(job, opts) {
     return path.resolve(cwd, opts.outOverride);
   }
   const outDir = path.resolve(cwd, opts.outDir);
-  const themeSuffix = job.theme === 'light' ? '-light' : '';
+  const themeSuffix = job.theme ? '-' + job.theme : '';
   if (job.mode === 'bundle') {
     return path.join(outDir, job.inputBase, `${job.bundleId}${themeSuffix}.mp4`);
   }
@@ -553,9 +638,10 @@ async function recordJob(browser, job, opts, capturesRoot) {
       });
     }
 
-    if (job.theme === 'light') {
-      await page.evaluate(() =>
-        document.documentElement.setAttribute('data-theme', 'light')
+    if (job.theme) {
+      await page.evaluate(
+        (t) => document.documentElement.setAttribute('data-theme', t),
+        job.theme
       );
     }
 

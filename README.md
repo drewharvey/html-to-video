@@ -70,9 +70,9 @@ h2v export animation.html        # one file
 h2v export bundle.html           # bundles auto-detected
 h2v export a.html b.html dir/    # explicit list, mixing files and dirs
 
-h2v export --theme both          # produce dark + light variants
+h2v export --theme all           # one MP4 per declared theme
 h2v export --duration 8s solo.html
-h2v export --dry-run             # print plan without recording
+themeh2v export --dry-run             # print plan without recording
 
 h2v review ./anims               # build a one-page preview of every
                                  # animation; opens in your browser, deletes
@@ -163,6 +163,60 @@ Neither attribute is set during `h2v review` — review is for inspection, so co
 
 ---
 
+## Theming animations
+
+Optional. If your animation supports more than one visual theme (light/dark, brand variants, high-contrast, etc.), declare them in a `<meta>` tag and h2v can record one MP4 per theme.
+
+### Page contract
+
+```html
+<head>
+  <meta name="h2v-themes" content="dark,light">
+  <style>
+    /* The default theme is the FIRST one listed. h2v doesn't set any
+       attribute when recording it — your CSS just needs to default to it. */
+    body { background: #0b0b0c; color: #e6e6e8; }
+
+    /* For every other declared theme, h2v sets data-theme="<name>" on
+       <html> after navigation. React however you like. */
+    [data-theme="light"] body { background: #f4f4f5; color: #18181b; }
+  </style>
+</head>
+```
+
+Theme names can be anything matching `[a-zA-Z0-9_-]+`. `dark` / `light` are conventions, not requirements:
+
+```html
+<meta name="h2v-themes" content="default,sunset,ocean,high-contrast">
+```
+
+The first listed theme is the default — no attribute set, no filename suffix. Every other theme sets `data-theme="<name>"` on `<html>`, and the resulting MP4 is suffixed with `-<name>` (so `anim.mp4`, `anim-sunset.mp4`, `anim-ocean.mp4`, `anim-high-contrast.mp4`).
+
+Pages without a `h2v-themes` meta are single-theme — h2v records them once, no theme handling.
+
+### CLI
+
+| Flag | Effect |
+|---|---|
+| (none) | Record only the default (first declared) theme. Unthemed pages get one MP4. |
+| `--theme <name>` | Record only this theme. Must be declared by the page. |
+| `--theme a,b,c` | Record this list. Each must be declared. |
+| `--theme all` | Record every declared theme. Unthemed pages still get one MP4. |
+
+If you pass an explicit theme that the page hasn't declared, h2v errors out and lists what's declared. This catches typos and prevents silent identical outputs.
+
+### Bundles
+
+Bundle markers carry a `themes` attribute that follows the same rules:
+
+```html
+<!-- ===== ANIMATION_START id="hero" capture_duration="5s" themes="dark,light" ===== -->
+```
+
+Each animation in a bundle has its own theme list — they don't have to match.
+
+---
+
 ## Setting per-file duration
 
 For a **single-file animation**, h2v needs to know how long to record. In priority order:
@@ -204,7 +258,7 @@ Multiple animations can live in one HTML file, each delimited by markers. `h2v` 
 <!-- ===== ANIMATION_END id="reveal" ===== -->
 ```
 
-Required marker attributes: `id` and `capture_duration`. `title` is optional (shown in console logs). Other attributes are tolerated and ignored. The legacy form `FRAME_START` / `FRAME_END` also works for backward compatibility.
+Required marker attributes: `id` and `capture_duration`. Optional: `title` (shown in console logs) and `themes` (see [Theming animations](#theming-animations)). Other attributes are tolerated and ignored. The legacy form `FRAME_START` / `FRAME_END` also works for backward compatibility.
 
 A worked example with 12 animations lives in [`demo/`](demo/) — bundle and standalone-files versions of the same content, ready to test all three usage modes.
 
@@ -221,7 +275,7 @@ A worked example with 12 animations lives in [`demo/`](demo/) — bundle and sta
 | `--scale <N>` | `3` | Device scale factor. With defaults this gives 3840×2160 (4K). |
 | `--crf <N>` | `18` | x264 CRF (0–51). Lower = bigger/better; 18 is visually lossless. |
 | `--slowdown <N>` | `10` | Real-time slowdown factor. The browser plays animations at `1/N` speed so screenshots can keep up; the resulting MP4 plays back at the original speed. Total recording wall time = animation duration × N. Use `1` to disable (only works if a screenshot fits in one frame interval — usually not at 4K). |
-| `--theme <m>` | `dark` | `dark`, `light`, or `both`. `both` produces two MP4s per animation; light has a `-light` filename suffix. |
+| `--theme <spec>` | — | Themes to record. `<name>`, comma list, or `all`. Each requested theme must be declared via `<meta name="h2v-themes" content="...">` (see [Theming animations](#theming-animations)). With no flag, the default theme is used. |
 | `--out-dir <path>` | `./output` | Output directory. |
 | `--out <path>` | — | Exact output filename. Only valid when exactly one MP4 will be produced. |
 | `--no-ffmpeg` | off | Capture PNGs only; skip stitching and the cleanup step. |

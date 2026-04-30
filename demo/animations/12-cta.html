@@ -39,7 +39,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
   .glow{position:fixed;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--accent) 5%,transparent) 0%,transparent 70%);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:pulse 4s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:.5;transform:translate(-50%,-50%) scale(1)}50%{opacity:1;transform:translate(-50%,-50%) scale(1.15)}}
 
-</style><meta name="h2v-duration" content="5s"></head><body>
+</style><meta name="h2v-duration" content="5s"><meta name="h2v-themes" content="dark,light"></head><body>
 <div class="controls" data-h2v-hide><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
 
 <div class="glow"></div>
