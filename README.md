@@ -54,8 +54,8 @@ In **directory mode** (no path args, or when a directory is passed) `h2v` skips 
 ## How it works
 
 1. Each animation is opened in headless Chrome at the chosen viewport.
-2. **Before any page script runs**, `h2v` overrides `Date`, `performance.now`, `setTimeout`, `setInterval`, and `requestAnimationFrame` with a virtual clock that only advances when the recorder ticks it. This makes screenshot timing deterministic regardless of how long encoding takes per frame.
-3. For each output frame, the clock advances by `1000 / fps` ms (16.67 ms at 60fps), all queued callbacks fire, then a PNG is captured.
+2. Before any page script runs, `h2v` pauses Chromium's clock using the `Emulation.setVirtualTimePolicy` CDP method. Once paused, **everything** in the page advances only when `h2v` ticks it forward: `Date`, `performance.now`, `setTimeout`, `setInterval`, `requestAnimationFrame`, and CSS `animation`/`transition` properties all share one virtualized clock.
+3. For each output frame, the clock budgets `1000 / fps` ms (16.67 ms at 60fps), the engine runs all timers/animations that fall in that window, then a PNG is captured. The browser is also launched with `--run-all-compositor-stages-before-draw` so each screenshot reflects every queued render before being taken.
 4. PNGs go to `./captures/<job>/0001.png` … and ffmpeg stitches them into MP4s with `-c:v libx264 -pix_fmt yuv420p -crf 18`.
 5. `./captures/` is wiped on exit — both on success and failure — unless `--no-ffmpeg` is set.
 
@@ -136,7 +136,6 @@ Environment variables:
 
 ## Limitations
 
-- **CSS animations are real-time.** The virtual clock controls JS timing (`Date`, `setTimeout`, `requestAnimationFrame`, etc.). CSS `transition` and `animation` properties are still composited against wall-clock time by Chromium. In practice this is fine — screenshots happen quickly between virtual ticks — but if you ever see CSS-driven motion that looks subtly off, fully frame-perfect CSS would require Chromium's `Emulation.setVirtualTimePolicy` over CDP, which isn't wired up.
 - **No recursion.** Directory expansion only finds `*.html` at the top level of the named directory.
 - **Single-shot per page.** Each animation is recorded by playing through once from t=0. If your animation loops, the recording stops at the configured duration regardless.
 

@@ -64,8 +64,8 @@ The user has confirmed `record.js` produces correct 4K @ 60fps output on their M
 ## Watch out for (gotchas already hit)
 
 - **`</script>` escaping** — if any future code embeds HTML inside a `<script>` block, replace `</` with `<\/` in the embedded JSON, otherwise the HTML tokenizer terminates the outer script early. Not expected to recur in `cli.js`, but flagged.
-- **`evaluateOnNewDocument`** — the clock override MUST be installed via `page.evaluateOnNewDocument(...)` so it runs before any page script. Don't downgrade to `page.evaluate(...)`.
-- **CSS animations are real-time** — the JS virtual clock doesn't virtualize Chromium's compositor. CSS `transition`/`animation` still tick by wall clock. Acceptable for now; future option is `Emulation.setVirtualTimePolicy` via CDP. Don't add unless asked.
+- **Virtual time is engine-level via CDP** — the recorder uses Chromium's `Emulation.setVirtualTimePolicy` (over a CDP session) to pause and tick the browser clock. This virtualizes JS timers AND CSS animations/transitions together. The earlier JS-only `installClockOverride` approach was retired because it left CSS transitions on real wall time, causing visible desync (e.g. frame-09 in the Swing example). Don't reintroduce it.
+- **`--run-all-compositor-stages-before-draw`** Chromium launch flag is required for screenshots to reflect all queued render work after each virtual-time tick. Don't drop it.
 - **Chrome on aarch64** — Google publishes no ARM64 Chrome; Puppeteer's bundled download falls back to x64 ELF that won't execute on aarch64. The `PUPPETEER_EXECUTABLE_PATH` hook is the workaround. Sandbox runs need this; user's Mac doesn't.
 - **`captures/` cleanup must run in `finally`** — both success and exception paths. Already done in `record.js`; preserve.
 - **Browser reuse** — launch one browser, open a new page per animation. Existing pattern; don't regress to one browser per file.

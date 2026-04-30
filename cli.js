@@ -432,101 +432,56 @@ function printPlan(jobs, opts) {
 }
 
 // =========================================================================
-// Browser-side: virtual clock override
+// Virtual time via CDP (Emulation.setVirtualTimePolicy)
 // =========================================================================
-
-// Runs inside the page BEFORE any page script. Replaces Date,
-// performance.now, setTimeout, setInterval, and requestAnimationFrame with
-// a virtual clock that only advances when window.__advanceClock(ms) is
-// called from outside.
 //
-// Note: this controls JS-driven timing. CSS animations and transitions are
-// still composited against real time by Chromium.
-function installClockOverride() {
-  const RealDate = window.Date;
-  const realPerformance = window.performance;
-  const baseEpoch = RealDate.now();
-  let virtualNow = 0;
-  let nextId = 1;
-  const tasks = new Map();
+// Chromium's Emulation.setVirtualTimePolicy CDP method virtualizes the
+// browser's clock at the engine level: Date, performance.now, setTimeout,
+// setInterval, requestAnimationFrame, AND CSS animations/transitions all
+// advance together only when we tell them to. This eliminates the JS-vs-CSS
+// timing skew that pure JS clock overrides can't address.
 
-  function FakeDate(...args) {
-    if (!(this instanceof FakeDate)) {
-      return new RealDate(baseEpoch + virtualNow).toString();
-    }
-    if (args.length === 0) return new RealDate(baseEpoch + virtualNow);
-    return new RealDate(...args);
-  }
-  FakeDate.now = () => Math.floor(baseEpoch + virtualNow);
-  FakeDate.UTC = RealDate.UTC;
-  FakeDate.parse = RealDate.parse;
-  FakeDate.prototype = RealDate.prototype;
-  window.Date = FakeDate;
+const VIRTUAL_TIME_OPTS = {
+  // Pause again after running this many tasks in a row, even if budget
+  // hasn't expired. Prevents tight `setInterval` loops from starving the
+  // budget timer.
+  maxVirtualTimeTaskStarvationCount: 100,
+};
+const NAV_BUDGET_MS = 30000;
 
-  realPerformance.now = () => virtualNow;
+async function installVirtualTime(page) {
+  const client = await page.target().createCDPSession();
+  await client.send('Emulation.setVirtualTimePolicy', {
+    policy: 'pause',
+    initialVirtualTime: Date.now(),
+  });
+  return client;
+}
 
-  window.requestAnimationFrame = (cb) => {
-    const id = nextId++;
-    tasks.set(id, { kind: 'raf', fn: cb });
-    return id;
-  };
-  window.cancelAnimationFrame = (id) => { tasks.delete(id); };
+async function navigateUnderVirtualTime(page, client, navigate) {
+  // Allow virtual time to flow during navigation/load, then re-pause.
+  // We kick off the navigation first so the policy and the navigation
+  // race together; pauseIfNetworkFetchesPending stops time as soon as
+  // the page is quiescent.
+  const navigation = navigate();
+  await client.send('Emulation.setVirtualTimePolicy', {
+    policy: 'pauseIfNetworkFetchesPending',
+    budget: NAV_BUDGET_MS,
+    ...VIRTUAL_TIME_OPTS,
+  });
+  await navigation;
+  await client.send('Emulation.setVirtualTimePolicy', { policy: 'pause' });
+}
 
-  window.setTimeout = (fn, delay, ...args) => {
-    const id = nextId++;
-    const d = typeof delay === 'number' ? Math.max(0, delay) : 0;
-    tasks.set(id, { kind: 'timeout', fn, args, fireAt: virtualNow + d });
-    return id;
-  };
-  window.clearTimeout = (id) => { tasks.delete(id); };
-
-  window.setInterval = (fn, delay, ...args) => {
-    const id = nextId++;
-    const d = typeof delay === 'number' ? Math.max(1, delay) : 1;
-    tasks.set(id, { kind: 'interval', fn, args, fireAt: virtualNow + d, period: d });
-    return id;
-  };
-  window.clearInterval = (id) => { tasks.delete(id); };
-
-  window.__advanceClock = (ms) => {
-    const target = virtualNow + ms;
-    let safety = 0;
-    while (safety++ < 100000) {
-      let bestId = null;
-      let bestFireAt = Infinity;
-      for (const [id, t] of tasks) {
-        if (t.kind === 'raf') continue;
-        if (t.fireAt <= target && t.fireAt < bestFireAt) {
-          bestId = id;
-          bestFireAt = t.fireAt;
-        }
-      }
-      if (bestId === null) break;
-      const t = tasks.get(bestId);
-      virtualNow = t.fireAt;
-      if (t.kind === 'interval') {
-        t.fireAt = virtualNow + t.period;
-      } else {
-        tasks.delete(bestId);
-      }
-      try { t.fn.apply(null, t.args || []); }
-      catch (e) { console.error('[virtual-timer]', e); }
-    }
-    if (safety >= 100000) {
-      console.warn('[virtual-clock] gave up after 100000 timer iterations in one tick');
-    }
-    virtualNow = target;
-
-    const rafIds = [];
-    for (const [id, t] of tasks) if (t.kind === 'raf') rafIds.push(id);
-    for (const id of rafIds) {
-      const t = tasks.get(id);
-      if (!t) continue;
-      tasks.delete(id);
-      try { t.fn(virtualNow); }
-      catch (e) { console.error('[virtual-raf]', e); }
-    }
-  };
+function advanceVirtualTime(client, ms) {
+  return new Promise((resolve) => {
+    client.once('Emulation.virtualTimeBudgetExpired', resolve);
+    client.send('Emulation.setVirtualTimePolicy', {
+      policy: 'pauseIfNetworkFetchesPending',
+      budget: ms,
+      ...VIRTUAL_TIME_OPTS,
+    });
+  });
 }
 
 // =========================================================================
@@ -541,20 +496,14 @@ async function recordJob(browser, job, opts, capturesRoot) {
       height: opts.height,
       deviceScaleFactor: opts.scale,
     });
-    await page.evaluateOnNewDocument(installClockOverride);
 
-    if (job.mode === 'bundle') {
-      // setContent navigates to about:blank first, which triggers the
-      // evaluateOnNewDocument override before the new HTML is parsed.
-      await page.setContent(job.bundleHtml, { waitUntil: 'load' });
-    } else {
-      await page.goto('file://' + job.inputPath, { waitUntil: 'load' });
-    }
+    const client = await installVirtualTime(page);
 
-    const ready = await page.evaluate(() => typeof window.__advanceClock === 'function');
-    if (!ready) {
-      throw new Error(`virtual clock not installed for ${job.label} — possible Puppeteer compatibility issue`);
-    }
+    await navigateUnderVirtualTime(page, client, () =>
+      job.mode === 'bundle'
+        ? page.setContent(job.bundleHtml, { waitUntil: 'load' })
+        : page.goto('file://' + job.inputPath, { waitUntil: 'load' })
+    );
 
     if (job.theme === 'light') {
       await page.evaluate(() =>
@@ -568,7 +517,7 @@ async function recordJob(browser, job, opts, capturesRoot) {
 
     const tickMs = 1000 / opts.fps;
     for (let i = 1; i <= job.totalFrames; i++) {
-      await page.evaluate((tick) => window.__advanceClock(tick), tickMs);
+      await advanceVirtualTime(client, tickMs);
       const fileName = String(i).padStart(4, '0') + '.png';
       await page.screenshot({
         path: path.join(captureDir, fileName),
@@ -673,7 +622,14 @@ async function main() {
   try {
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        // Force the compositor to finish all queued work before each draw.
+        // Necessary so screenshots taken right after virtual-time ticks
+        // reflect every animation frame the browser would have rendered.
+        '--run-all-compositor-stages-before-draw',
+      ],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     });
 

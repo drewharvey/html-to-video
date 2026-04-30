@@ -53,3 +53,21 @@ h2v export all-frames-bundle.html
 # Expect output/all-frames-bundle/frame-01.mp4 ... frame-12.mp4
 # Compare against your previously-produced 4K MP4s — should be identical.
 ```
+
+### CDP virtual time (added after frame-09 desync)
+The JS-only clock override has been replaced with Chromium's
+`Emulation.setVirtualTimePolicy` (CDP). This now virtualizes CSS
+`animation`/`transition` properties along with JS timers, fixing the
+frame-09 progress-bar-vs-counter desync.
+
+Things to watch for on your Mac:
+- `frame-09.mp4` should now show the ring fill and the % counter
+  finishing at the same moment (~2.5s after kick-off), matching the
+  HTML when opened directly.
+- Spot-check frames that use CSS transitions (frame-01 fade-in,
+  frame-08 progress bar, frame-11 split layout) — they should look
+  identical to the originals or subtly better. None should regress.
+- If a frame hangs during capture, `Emulation.virtualTimeBudgetExpired`
+  may not be firing. Most likely cause: a runaway `setInterval` with
+  delay 0 that exceeds the `maxVirtualTimeTaskStarvationCount: 100`
+  cap. Bump that constant in `cli.js` if needed.
