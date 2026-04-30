@@ -558,7 +558,12 @@ async function recordJob(browser, job, opts, capturesRoot) {
     process.stdout.write('\n');
     return captureDir;
   } finally {
-    await page.close();
+    // Cleanup must not mask the actual recording outcome. chrome-headless-shell
+    // sometimes drops the CDP connection after the final beginFrame call, which
+    // would otherwise turn a successful recording into a thrown error and skip
+    // ffmpeg. If `try` threw, JS still re-throws the original error after this
+    // silent catch runs.
+    try { await page.close(); } catch { /* ignore */ }
   }
 }
 
@@ -679,7 +684,9 @@ async function main() {
         console.log(`    done in ${elapsed}s`);
       }
     } finally {
-      await browser.close();
+      // Same rationale as recordJob's page.close: cleanup errors must not
+      // mask success/failure of the actual recording.
+      try { await browser.close(); } catch { /* ignore */ }
     }
 
     console.log('\nAll animations recorded.');
