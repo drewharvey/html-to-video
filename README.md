@@ -92,25 +92,25 @@ Then `h2v export` picks the right length automatically with no flags.
 
 ## Bundle format (multi-frame storyboards)
 
-Multiple animations can live in one HTML file, each delimited by markers. `h2v` emits one MP4 per frame, named `output/<bundle-base>/<frame-id>.mp4`.
+Multiple animations can live in one HTML file, each delimited by markers. `h2v` emits one MP4 per animation, named `output/<bundle-base>/<animation-id>.mp4`.
 
 ```html
-<!-- ===== FRAME_START id="frame-01" title="Intro" capture_duration="5s" ===== -->
+<!-- ===== ANIMATION_START id="intro" capture_duration="5s" ===== -->
 <!DOCTYPE html>
 <html>
   <head>...</head>
   <body>...the animation...</body>
 </html>
-<!-- ===== FRAME_END id="frame-01" ===== -->
+<!-- ===== ANIMATION_END id="intro" ===== -->
 
-<!-- ===== FRAME_START id="frame-02" title="Reveal" capture_duration="8s" ===== -->
+<!-- ===== ANIMATION_START id="reveal" capture_duration="8s" ===== -->
 ...
-<!-- ===== FRAME_END id="frame-02" ===== -->
+<!-- ===== ANIMATION_END id="reveal" ===== -->
 ```
 
-Required marker attributes: `id` and `capture_duration`. `title` is optional (used in console logs). Other attributes (such as `filename`) are tolerated but ignored.
+Required marker attributes: `id` and `capture_duration`. `title` is optional (shown in console logs). Other attributes are tolerated and ignored. The legacy form `FRAME_START` / `FRAME_END` also works for backward compatibility.
 
-A worked example with twelve frames lives in [`examples/swing-video/`](examples/swing-video/).
+A worked example with 12 animations lives in [`demo/`](demo/) — bundle and standalone-files versions of the same content, ready to test all three usage modes.
 
 ---
 
@@ -150,6 +150,6 @@ Environment variables:
 
 ---
 
-## Examples
+## Demo
 
-- **`examples/swing-video/`** — 12-frame product video bundle for the Vaadin Swing Modernization Toolkit. Includes the original bundle, the split per-frame files, and a small `build-review.js` script that generates a local browser preview page.
+- **`demo/`** — 12-animation Vaadin Swing Modernization Toolkit storyboard set up to exercise all three usage modes (single file / directory / bundle). See [`demo/README.md`](demo/README.md) for the smoke-test commands.

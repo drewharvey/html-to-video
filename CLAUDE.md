@@ -2,6 +2,8 @@
 
 A CLI (`h2v`) that records HTML animations as 4K MP4s via Puppeteer + ffmpeg. Entry point: `cli.js`. Designed for the workflow of generating animations at claude.ai and exporting them locally.
 
+The bundle marker format uses `<!-- ===== ANIMATION_START id="..." capture_duration="Ns" ===== -->` / `ANIMATION_END`. The legacy `FRAME_START` / `FRAME_END` is still accepted for backward compatibility (regex in `cli.js` matches either).
+
 ## Hard rules (load-bearing — read before changing anything in `cli.js`)
 
 The animation-timing approach in `cli.js` is the result of many failed iterations. **Do not** "fix" or "improve" it without first re-reading the trade-off below.
@@ -72,25 +74,35 @@ node /Users/drewharvey/Projects/claude-animation-app/cli.js export sync-test.htm
 ```
 Then `Read /tmp/h2v-test/captures/sync-test/0015.png` for the midpoint frame; both bars should read ~25% (frame 15 of 60 = 25% of a 1s animation).
 
+## In-repo demo
+
+`demo/` exercises all three usage modes against real content:
+- Single file: `h2v export demo/animations/09-automation.html`
+- Directory: `h2v export demo/animations/`
+- Bundle: `h2v export demo/bundle.html`
+
+The 12 animations exist in two forms (`bundle.html` markers and individual files in `animations/` with `<meta name="h2v-duration">` tags) so the same content can be tested under each mode. See `demo/README.md`.
+
 ## Codebase shape
 
 ```
 cli.js                          # ~700 lines, one file, only dep is puppeteer
 package.json                    # bin: { h2v, html-to-video } → cli.js
 README.md                       # user-facing docs
-examples/swing-video/           # worked example: 12-frame storyboard bundle
-  all-frames-bundle.html        # source bundle with FRAME_START markers
-  frames/                       # split bundle (committed for convenience)
-  build-review.js               # generates review.html for local browser preview
+demo/                           # smoke-test fixtures for the three usage modes
+  bundle.html                   # 12-animation bundle with ANIMATION_START markers
+  animations/                   # the same 12 animations as standalone files
+                                # (each with <meta name="h2v-duration">)
+  review.html                   # gitignored; foundation for an upcoming feature
   README.md
 .gitignore                      # node_modules, output, captures, review.html, .DS_Store
 ```
 
 ## Things that aren't broken — don't change them
 
-- The bundle marker format (`<!-- ===== FRAME_START id="..." capture_duration="Ns" ===== -->`) — extra attributes like `filename` are tolerated and ignored.
+- The bundle marker format (`<!-- ===== ANIMATION_START id="..." capture_duration="Ns" ===== -->`, with `FRAME_START` accepted as a legacy alias) — extra attributes like `filename` are tolerated and ignored.
 - The single-file metadata convention (`<meta name="h2v-duration" content="Ns">`).
-- Output paths: `output/<basename>.mp4` for single files, `output/<bundle>/<frame-id>.mp4` for bundles.
+- Output paths: `output/<basename>.mp4` for single files, `output/<bundle>/<animation-id>.mp4` for bundles.
 - The `--theme dark|light|both` flag and `-light` filename suffix convention.
 - The skip rules in directory mode (dotfiles, `review.html`, anything inside `output/` / `node_modules/` / `frames/`). Explicitly named file args bypass them.
 

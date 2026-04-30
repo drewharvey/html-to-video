@@ -1,4 +1,4 @@
-<!-- ===== FRAME_START id="frame-01" title="The Established App" filename="frame-01-established-app.html" capture_duration="5s" ===== -->
+<!-- ===== ANIMATION_START id="01-established-app" title="The Established App" filename="01-established-app.html" capture_duration="5s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F01 — The Established App</title>
 <style>
 /* Shared theme variables for all frames */
@@ -76,9 +76,9 @@ const t=document.getElementById('tb');R.forEach((r,i)=>{const e=document.createE
 function uc(){document.getElementById('clock').textContent=new Date().toLocaleTimeString()}uc();setInterval(uc,1000);
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-01" ===== -->
+<!-- ===== ANIMATION_END id="01-established-app" ===== -->
 
-<!-- ===== FRAME_START id="frame-02" title="Growing Friction" filename="frame-02-growing-friction.html" capture_duration="11s" ===== -->
+<!-- ===== ANIMATION_START id="02-growing-friction" title="Growing Friction" filename="02-growing-friction.html" capture_duration="11s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F02 — Growing Friction</title>
 <style>
 /* Shared theme variables for all frames */
@@ -151,9 +151,9 @@ let dep=0,fail=0;
 M.forEach((m,i)=>{setTimeout(()=>{const d=document.getElementById('d'+i);d.className='desktop pending';setTimeout(()=>{d.className='desktop '+m.r;document.getElementById('ic'+i).classList.add('visible');dep++;if(m.r==='fail')fail++;pF.style.width=(dep/M.length*100)+'%';if(fail>0)pF.style.background=fail>2?'var(--red)':'var(--amber)';pT.textContent=dep+' / '+M.length+(fail>0?' · '+fail+' failed':'');if(fail>0)pT.style.color='var(--red)'},300)},1800+i*400)});
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-02" ===== -->
+<!-- ===== ANIMATION_END id="02-growing-friction" ===== -->
 
-<!-- ===== FRAME_START id="frame-03" title="The Rewrite Trap" filename="frame-03-rewrite-trap.html" capture_duration="10s" ===== -->
+<!-- ===== ANIMATION_START id="03-rewrite-trap" title="The Rewrite Trap" filename="03-rewrite-trap.html" capture_duration="10s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F03 — The Rewrite Trap</title>
 <style>
 /* Shared theme variables for all frames */
@@ -227,9 +227,9 @@ function p2(){fill.style.background='var(--amber)';dot.style.background='var(--a
 function p3(){fill.style.background='var(--red)';dot.style.background='var(--red)';dot.style.boxShadow='0 0 0 2px var(--red)';el.style.color='var(--red)';el.textContent='Est. completion (???)';setTimeout(()=>{em.style.left='110%'},200);const iv=setInterval(()=>{if(phase!==3){clearInterval(iv);return}progress+=.05;if(progress>=35){progress=35;clearInterval(iv)}uf(progress)},100)}
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-03" ===== -->
+<!-- ===== ANIMATION_END id="03-rewrite-trap" ===== -->
 
-<!-- ===== FRAME_START id="frame-04" title="Toolkit Introduction" filename="frame-04-toolkit-intro.html" capture_duration="5s" ===== -->
+<!-- ===== ANIMATION_START id="04-toolkit-intro" title="Toolkit Introduction" filename="04-toolkit-intro.html" capture_duration="5s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F04 — Toolkit Introduction</title>
 <style>
 /* Shared theme variables for all frames */
@@ -296,9 +296,9 @@ function startAnim(){resetAnim()}
 window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-04" ===== -->
+<!-- ===== ANIMATION_END id="04-toolkit-intro" ===== -->
 
-<!-- ===== FRAME_START id="frame-05" title="Browser Reveal" filename="frame-05-browser-reveal.html" capture_duration="4s" ===== -->
+<!-- ===== ANIMATION_START id="05-browser-reveal" title="Browser Reveal" filename="05-browser-reveal.html" capture_duration="4s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F05 — Browser Reveal</title>
 <style>
 /* Shared theme variables for all frames */
@@ -378,9 +378,9 @@ function startAnim(){resetAnim()}
 window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
 setTimeout(()=>{document.getElementById('browser').classList.add('visible')},500);
 </script></body></html>
-<!-- ===== FRAME_END id="frame-05" ===== -->
+<!-- ===== ANIMATION_END id="05-browser-reveal" ===== -->
 
-<!-- ===== FRAME_START id="frame-06" title="Simplification" filename="frame-06-simplification.html" capture_duration="7s" ===== -->
+<!-- ===== ANIMATION_START id="06-simplification" title="Simplification" filename="06-simplification.html" capture_duration="7s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F06 — Simplification</title>
 <style>
 /* Shared theme variables for all frames */
@@ -446,9 +446,9 @@ pos.forEach((p,i)=>{const e=document.createElement('div');e.className='desktop '
 setTimeout(()=>{ds.forEach(e=>{e.style.left='320px';e.style.top='160px'});setTimeout(()=>{ds.forEach((e,i)=>{setTimeout(()=>{e.classList.add('collapsed')},i*30)});setTimeout(()=>{document.getElementById('server').classList.add('visible')},600)},1300)},2500);
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-06" ===== -->
+<!-- ===== ANIMATION_END id="06-simplification" ===== -->
 
-<!-- ===== FRAME_START id="frame-07" title="Hybrid State" filename="frame-07-hybrid-state.html" capture_duration="7s" ===== -->
+<!-- ===== ANIMATION_START id="07-hybrid-state" title="Hybrid State" filename="07-hybrid-state.html" capture_duration="7s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F07 — Hybrid State</title>
 <style>
 /* Shared theme variables for all frames */
@@ -542,9 +542,9 @@ setTimeout(()=>{document.getElementById('swBadge').classList.add('visible')},100
 setTimeout(()=>{document.getElementById('swBadge').classList.remove('visible');setTimeout(()=>{document.getElementById('sv').classList.add('exit');document.getElementById('mv').classList.add('enter');document.getElementById('vdBadge').classList.add('visible');document.getElementById('navTag').textContent='New';document.getElementById('navTag').className='tag nw'},300)},3500);
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-07" ===== -->
+<!-- ===== ANIMATION_END id="07-hybrid-state" ===== -->
 
-<!-- ===== FRAME_START id="frame-08" title="Time-lapse" filename="frame-08-timelapse.html" capture_duration="10s" ===== -->
+<!-- ===== ANIMATION_START id="08-timelapse" title="Time-lapse" filename="08-timelapse.html" capture_duration="10s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F08 — Time-lapse</title>
 <style>
 /* Shared theme variables for all frames */
@@ -613,9 +613,9 @@ setTimeout(()=>{ctr.classList.add('visible')},500);
 order.forEach((ci,step)=>{setTimeout(()=>{cells[ci].classList.replace('legacy','modern');m++;const p=Math.round(m/12*100);ctr.textContent=p+'%';bf.style.width=p+'%';if(p===100){ctr.style.color='var(--green)';document.getElementById('done').classList.add('visible')}},1200+step*500)});
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-08" ===== -->
+<!-- ===== ANIMATION_END id="08-timelapse" ===== -->
 
-<!-- ===== FRAME_START id="frame-09" title="Automation" filename="frame-09-automation.html" capture_duration="7s" ===== -->
+<!-- ===== ANIMATION_START id="09-automation" title="Automation" filename="09-automation.html" capture_duration="7s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F09 — Automation</title>
 <style>
 /* Shared theme variables for all frames */
@@ -686,9 +686,9 @@ setTimeout(()=>{document.getElementById('leg').classList.add('visible')},3200);
 setTimeout(()=>{document.getElementById('jb').classList.add('visible')},4200);
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-09" ===== -->
+<!-- ===== ANIMATION_END id="09-automation" ===== -->
 
-<!-- ===== FRAME_START id="frame-10" title="End State" filename="frame-10-end-state.html" capture_duration="6s" ===== -->
+<!-- ===== ANIMATION_START id="10-end-state" title="End State" filename="10-end-state.html" capture_duration="6s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F10 — End State</title>
 <style>
 /* Shared theme variables for all frames */
@@ -757,9 +757,9 @@ function startAnim(){resetAnim()}
 window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
 ['t1','t2','t3','t4','t5'].forEach((id,i)=>{setTimeout(()=>{document.getElementById(id).classList.add('visible')},1500+i*350)});
 </script></body></html>
-<!-- ===== FRAME_END id="frame-10" ===== -->
+<!-- ===== ANIMATION_END id="10-end-state" ===== -->
 
-<!-- ===== FRAME_START id="frame-11" title="Before / After" filename="frame-11-before-after.html" capture_duration="6s" ===== -->
+<!-- ===== ANIMATION_START id="11-before-after" title="Before / After" filename="11-before-after.html" capture_duration="6s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F11 — Before / After</title>
 <style>
 /* Shared theme variables for all frames */
@@ -848,9 +848,9 @@ function startAnim(){resetAnim()}
 window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-11" ===== -->
+<!-- ===== ANIMATION_END id="11-before-after" ===== -->
 
-<!-- ===== FRAME_START id="frame-12" title="Call to Action" filename="frame-12-cta.html" capture_duration="5s" ===== -->
+<!-- ===== ANIMATION_START id="12-cta" title="Call to Action" filename="12-cta.html" capture_duration="5s" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F12 — Call to Action</title>
 <style>
 /* Shared theme variables for all frames */
@@ -910,4 +910,4 @@ function startAnim(){resetAnim()}
 window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
 
 </script></body></html>
-<!-- ===== FRAME_END id="frame-12" ===== -->
+<!-- ===== ANIMATION_END id="12-cta" ===== -->

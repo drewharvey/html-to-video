@@ -21,9 +21,12 @@ const DEFAULTS = {
 
 const SKIP_FILENAMES = new Set(['review.html']);
 
-const FRAME_BLOCK_RE =
-  /<!--\s*=+\s*FRAME_START\s+(.*?)\s*=+\s*-->\s*([\s\S]*?)\s*<!--\s*=+\s*FRAME_END\b[^>]*?-->/g;
-const FRAME_START_PROBE = /<!--\s*=+\s*FRAME_START\b/;
+// Bundle marker syntax: ANIMATION_START / ANIMATION_END.
+// We also accept the older FRAME_START / FRAME_END for backward
+// compatibility with bundles authored before the rename.
+const ANIMATION_BLOCK_RE =
+  /<!--\s*=+\s*(?:ANIMATION|FRAME)_START\s+(.*?)\s*=+\s*-->\s*([\s\S]*?)\s*<!--\s*=+\s*(?:ANIMATION|FRAME)_END\b[^>]*?-->/g;
+const ANIMATION_START_PROBE = /<!--\s*=+\s*(?:ANIMATION|FRAME)_START\b/;
 const META_DURATION_RE =
   /<meta\s+name=["']h2v-duration["']\s+content=["']?(\d+(?:\.\d+)?)\s*s?["']?\s*\/?>/i;
 const ATTR_RE = /(\w+)="([^"]*)"/g;
@@ -261,7 +264,7 @@ function listHtmlInDir(dir) {
 // =========================================================================
 
 function detectMode(htmlText) {
-  return FRAME_START_PROBE.test(htmlText) ? 'bundle' : 'single';
+  return ANIMATION_START_PROBE.test(htmlText) ? 'bundle' : 'single';
 }
 
 function parseAttributes(attrString) {
@@ -277,18 +280,18 @@ function parseAttributes(attrString) {
 function parseBundleFrames(htmlText, sourcePath) {
   const frames = [];
   let m;
-  FRAME_BLOCK_RE.lastIndex = 0;
-  while ((m = FRAME_BLOCK_RE.exec(htmlText)) !== null) {
+  ANIMATION_BLOCK_RE.lastIndex = 0;
+  while ((m = ANIMATION_BLOCK_RE.exec(htmlText)) !== null) {
     const attrs = parseAttributes(m[1]);
     if (!attrs.id) {
-      throw new Error(`${sourcePath}: FRAME_START without id attribute`);
+      throw new Error(`${sourcePath}: ANIMATION_START without id attribute`);
     }
     if (!attrs.capture_duration) {
-      throw new Error(`${sourcePath}: FRAME_START id="${attrs.id}" missing capture_duration`);
+      throw new Error(`${sourcePath}: ANIMATION_START id="${attrs.id}" missing capture_duration`);
     }
     const durMatch = attrs.capture_duration.match(/^(\d+(?:\.\d+)?)s?$/i);
     if (!durMatch) {
-      throw new Error(`${sourcePath}: FRAME_START id="${attrs.id}" has invalid capture_duration "${attrs.capture_duration}"`);
+      throw new Error(`${sourcePath}: ANIMATION_START id="${attrs.id}" has invalid capture_duration "${attrs.capture_duration}"`);
     }
     frames.push({
       id: attrs.id,
@@ -298,7 +301,7 @@ function parseBundleFrames(htmlText, sourcePath) {
     });
   }
   if (frames.length === 0) {
-    throw new Error(`${sourcePath}: bundle marker found but no complete FRAME_START/FRAME_END pair`);
+    throw new Error(`${sourcePath}: bundle marker found but no complete ANIMATION_START/ANIMATION_END pair`);
   }
   return frames;
 }
