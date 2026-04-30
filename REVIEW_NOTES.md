@@ -67,7 +67,7 @@ The current approach pairs `setVirtualTimePolicy` with
      CSS animations/transitions at that virtual moment and renders +
      captures in one shot.
 
-Two consequences for your environment:
+Three consequences for your environment:
 - The recorder now launches `chrome-headless-shell` instead of the
   full Chrome (`headless: 'shell'`). `npm install puppeteer` already
   downloads chrome-headless-shell by default, so you shouldn't have to
@@ -76,6 +76,11 @@ Two consequences for your environment:
 - Chromium is launched with `--enable-begin-frame-control` and
   `--run-all-compositor-stages-before-draw`. These are mandatory for
   the new approach.
+- Each page is opened via a raw `Target.createTarget` call with
+  `enableBeginFrameControl: true`, not via `browser.newPage()`. The
+  launch flag alone isn't enough; the per-target option is also
+  required, otherwise `beginFrame` closes the target on its first
+  call.
 
 Things to watch for on your Mac:
 - `frame-09.mp4` should now show the ring fill and the % counter

@@ -477,8 +477,31 @@ function advanceVirtualTime(client, ms) {
 // Recording
 // =========================================================================
 
+// Puppeteer's browser.newPage() creates targets without
+// enableBeginFrameControl, which makes HeadlessExperimental.beginFrame close
+// the target on its first call. We have to call Target.createTarget directly
+// via CDP to get a target that beginFrame can drive, then ask Puppeteer to
+// adopt it as a Page.
+async function newPageWithBeginFrameControl(browser) {
+  const browserSession = await browser.target().createCDPSession();
+  try {
+    const before = new Set(browser.targets());
+    await browserSession.send('Target.createTarget', {
+      url: 'about:blank',
+      enableBeginFrameControl: true,
+    });
+    const newTarget = await browser.waitForTarget(
+      (t) => !before.has(t) && t.type() === 'page',
+      { timeout: 10000 }
+    );
+    return await newTarget.page();
+  } finally {
+    try { await browserSession.detach(); } catch { /* ignore */ }
+  }
+}
+
 async function recordJob(browser, job, opts, capturesRoot) {
-  const page = await browser.newPage();
+  const page = await newPageWithBeginFrameControl(browser);
   try {
     await page.setViewport({
       width: opts.width,
