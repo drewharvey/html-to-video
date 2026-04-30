@@ -475,16 +475,18 @@ function advanceVirtualTime(client, ms) {
 
 // Snap every Animation in the page to a specific virtual time. Run after
 // every virtual-time advance and before every screenshot.
+//
+// We deliberately do NOT call anim.pause(). Pausing every animation puts
+// Chromium in a state where the compositor stops scheduling BeginFrames
+// (no work to do), which makes Page.captureScreenshot hang waiting for a
+// frame that's never drawn. By leaving animations "running" but
+// re-anchoring their currentTime every video frame, we get a small,
+// consistent phase shift (real time elapsed between setCurrentTime and
+// the screenshot) instead of unbounded drift, and the screenshot
+// pipeline keeps doing what it needs to do.
 async function syncAnimationsTo(page, virtualNowMs) {
   await page.evaluate((virtualNow) => {
     for (const anim of document.getAnimations()) {
-      // Pause anything that's still running on the compositor's wall clock.
-      if (anim.playState === 'running') {
-        try { anim.pause(); } catch (_) { /* finished/cancelled */ }
-      }
-      // Set currentTime to the elapsed virtual time since the animation
-      // started. anim.startTime is in document.timeline coordinates,
-      // which setVirtualTimePolicy virtualizes.
       if (anim.startTime != null) {
         const elapsed = virtualNow - anim.startTime;
         if (elapsed >= 0) {

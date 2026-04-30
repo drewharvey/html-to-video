@@ -54,20 +54,25 @@ h2v export all-frames-bundle.html
 # Compare against your previously-produced 4K MP4s — should be identical.
 ```
 
-### CSS-vs-JS clock fix (frame-09), final approach
-Two earlier attempts to fix this didn't pan out:
+### CSS-vs-JS clock fix (frame-09), evolved approach
+Three earlier attempts didn't pan out:
 1. `Emulation.setVirtualTimePolicy` alone — virtualizes JS timers but
    not the compositor; CSS transitions still ticked on wall time.
 2. Adding `HeadlessExperimental.beginFrame` to drive the compositor —
    blocked by Chromium: `BeginFrameControl is not supported on MacOS yet`.
+3. Walking `document.getAnimations()` and calling `anim.pause()` per
+   frame — that put the compositor into a state with no work to do, so
+   it stopped scheduling BeginFrames, and `Page.captureScreenshot`
+   timed out waiting for a frame that was never drawn.
 
-Current approach: keep `setVirtualTimePolicy` for JS timers, and after
-each tick run a small in-page snippet that walks
-`document.getAnimations()`, pauses every running animation, and sets
-each one's `currentTime` to the elapsed virtual time since its
-`startTime`. This pins CSS transitions, CSS keyframe animations, and
-Web Animations API animations to the same clock as the JS timers
-without needing special browser flags.
+Current approach: same per-frame walk over `document.getAnimations()`,
+but only `currentTime` is re-set; we no longer call `pause()`.
+Animations keep ticking at compositor wall-clock rate, but we
+re-anchor each one to virtual time on every frame, so the captured
+screenshot is at most a "screenshot latency"'s worth of drift ahead
+of the intended state. That shows up in the recording as a small
+fixed phase shift across the entire animation, not a speed change —
+visually imperceptible.
 
 Things to watch for on your Mac:
 - `frame-09.mp4` should now show the ring fill and the % counter
