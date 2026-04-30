@@ -32,6 +32,32 @@ That's it. MP4s land in `./output/`.
 
 ---
 
+## Uninstall / cleanup
+
+To remove the global commands (whichever you installed with):
+
+```
+# If you used `npm install -g .`:
+npm uninstall -g html-to-video
+
+# If you used `npm link`:
+cd /path/to/this/repo && npm unlink
+# (from anywhere: `npm unlink -g html-to-video`)
+```
+
+To remove local artifacts:
+
+```
+rm -rf node_modules        # installed dependencies (~150 MB incl. Chromium download)
+rm -rf output captures     # recording outputs and intermediate PNGs
+```
+
+All of `node_modules/`, `output/`, and `captures/` are gitignored, so removing them doesn't change git state. After this you can either delete the repo directory or just leave it — there's nothing else on disk.
+
+> **Note:** if you used `npm link` and want to rename or move this directory, run `npm unlink` *before* the rename. The link is an absolute-path symlink, so renaming the directory leaves a broken symlink in your global npm bin. After the rename, run `npm link` again from the new path.
+
+---
+
 ## Usage
 
 ```
