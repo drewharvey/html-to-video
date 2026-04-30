@@ -54,33 +54,20 @@ h2v export all-frames-bundle.html
 # Compare against your previously-produced 4K MP4s — should be identical.
 ```
 
-### CDP virtual time + beginFrame (frame-09 fix, second attempt)
-The first attempt at this fix used only `Emulation.setVirtualTimePolicy`,
-which turned out to virtualize the *timer* clock (Date, setTimeout, rAF)
-but not the compositor's clock — so CSS transitions still ticked on
-wall time, and frame-09 still desynced.
+### CSS-vs-JS clock fix (frame-09), final approach
+Two earlier attempts to fix this didn't pan out:
+1. `Emulation.setVirtualTimePolicy` alone — virtualizes JS timers but
+   not the compositor; CSS transitions still ticked on wall time.
+2. Adding `HeadlessExperimental.beginFrame` to drive the compositor —
+   blocked by Chromium: `BeginFrameControl is not supported on MacOS yet`.
 
-The current approach pairs `setVirtualTimePolicy` with
-`HeadlessExperimental.beginFrame`. Each output frame:
-  1. advances the timer clock by 1000/fps ms (fires JS timers), then
-  2. calls beginFrame with a matching `frameTimeTicks`, which evaluates
-     CSS animations/transitions at that virtual moment and renders +
-     captures in one shot.
-
-Three consequences for your environment:
-- The recorder now launches `chrome-headless-shell` instead of the
-  full Chrome (`headless: 'shell'`). `npm install puppeteer` already
-  downloads chrome-headless-shell by default, so you shouldn't have to
-  do anything. If launch fails with "Could not find chrome-headless-shell",
-  run: `npx puppeteer browsers install chrome-headless-shell`.
-- Chromium is launched with `--enable-begin-frame-control` and
-  `--run-all-compositor-stages-before-draw`. These are mandatory for
-  the new approach.
-- Each page is opened via a raw `Target.createTarget` call with
-  `enableBeginFrameControl: true`, not via `browser.newPage()`. The
-  launch flag alone isn't enough; the per-target option is also
-  required, otherwise `beginFrame` closes the target on its first
-  call.
+Current approach: keep `setVirtualTimePolicy` for JS timers, and after
+each tick run a small in-page snippet that walks
+`document.getAnimations()`, pauses every running animation, and sets
+each one's `currentTime` to the elapsed virtual time since its
+`startTime`. This pins CSS transitions, CSS keyframe animations, and
+Web Animations API animations to the same clock as the JS timers
+without needing special browser flags.
 
 Things to watch for on your Mac:
 - `frame-09.mp4` should now show the ring fill and the % counter
@@ -89,10 +76,12 @@ Things to watch for on your Mac:
 - Spot-check frames that use CSS transitions (frame-01 fade-in,
   frame-08 progress bar, frame-11 split layout) — they should look
   identical to the originals or subtly better.
-- The screenshots are now produced by `HeadlessExperimental.beginFrame`
-  (base64 PNG returned by CDP, written to disk by the script), not
-  `page.screenshot()`. Pixel-identical visually but a different code
-  path; if anything looks off in the output PNGs, that's the suspect.
+- Default headless mode (`headless: true`) is back; no chrome-headless-shell
+  download or special flags required.
+- One known limitation: SMIL animations (`<animate>` inside SVG)
+  aren't reachable through `document.getAnimations()`, so they'd
+  still tick on wall time. None of the Swing frames use SMIL, but
+  flag this if future animations do.
 - If a frame hangs, `Emulation.virtualTimeBudgetExpired` isn't firing.
   Likely cause: a runaway `setInterval` with delay 0 starving the
   budget. Bump `maxVirtualTimeTaskStarvationCount` in `cli.js`.

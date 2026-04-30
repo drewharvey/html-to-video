@@ -432,32 +432,32 @@ function printPlan(jobs, opts) {
 }
 
 // =========================================================================
-// Virtual time + per-frame compositor control
+// Virtual time + Web Animations API per-frame control
 // =========================================================================
 //
-// Two CDP methods working together:
+// We virtualize timing in two layers:
 //
-//   1. Emulation.setVirtualTimePolicy — virtualizes the *timer* clock.
-//      Date, performance.now, setTimeout, setInterval, and rAF only
-//      advance when we hand out a budget.
+//   1. Emulation.setVirtualTimePolicy (CDP) — virtualizes the JS *timer*
+//      clock. Date.now, performance.now, setTimeout, setInterval, and
+//      requestAnimationFrame only advance when we hand out a budget.
 //
-//   2. HeadlessExperimental.beginFrame — instructs the *compositor* to
-//      render a frame at a specific virtual timestamp. This is what makes
-//      CSS animations and transitions tick in lockstep with the timer
-//      clock. setVirtualTimePolicy alone doesn't reach the compositor;
-//      without beginFrame, CSS transitions stay on the wall clock.
+//   2. document.getAnimations() in the page — every CSS transition,
+//      CSS keyframe animation, and Web Animations API animation is
+//      reachable through this list. After each virtual-time tick we
+//      pause every running animation and set its `currentTime` to the
+//      elapsed virtual time since its `startTime`. This sidesteps the
+//      compositor's own clock entirely, which is necessary because
+//      HeadlessExperimental.beginFrame (the "proper" way to drive the
+//      compositor) is not supported on macOS.
 //
-// beginFrame additionally captures the screenshot in the same call, so
-// the pixels we save are guaranteed to reflect the render the compositor
-// just produced.
-//
-// Requires `headless: 'shell'` (old headless) and the
-// `--enable-begin-frame-control` launch flag.
+// SMIL animations (<animate> in SVG) are NOT covered by this — they
+// don't appear in document.getAnimations(). The Swing example uses
+// CSS transitions throughout, which are covered.
 
 const VIRTUAL_TIME_OPTS = {
   // Pause again after running this many tasks in a row, even if budget
-  // hasn't expired. Prevents tight `setInterval` loops from starving the
-  // budget timer.
+  // hasn't expired. Prevents tight `setInterval` loops from starving
+  // the budget timer.
   maxVirtualTimeTaskStarvationCount: 100,
 };
 const NAV_BUDGET_MS = 30000;
@@ -473,35 +473,34 @@ function advanceVirtualTime(client, ms) {
   });
 }
 
+// Snap every Animation in the page to a specific virtual time. Run after
+// every virtual-time advance and before every screenshot.
+async function syncAnimationsTo(page, virtualNowMs) {
+  await page.evaluate((virtualNow) => {
+    for (const anim of document.getAnimations()) {
+      // Pause anything that's still running on the compositor's wall clock.
+      if (anim.playState === 'running') {
+        try { anim.pause(); } catch (_) { /* finished/cancelled */ }
+      }
+      // Set currentTime to the elapsed virtual time since the animation
+      // started. anim.startTime is in document.timeline coordinates,
+      // which setVirtualTimePolicy virtualizes.
+      if (anim.startTime != null) {
+        const elapsed = virtualNow - anim.startTime;
+        if (elapsed >= 0) {
+          try { anim.currentTime = elapsed; } catch (_) { /* finished */ }
+        }
+      }
+    }
+  }, virtualNowMs);
+}
+
 // =========================================================================
 // Recording
 // =========================================================================
 
-// Puppeteer's browser.newPage() creates targets without
-// enableBeginFrameControl, which makes HeadlessExperimental.beginFrame close
-// the target on its first call. We have to call Target.createTarget directly
-// via CDP to get a target that beginFrame can drive, then ask Puppeteer to
-// adopt it as a Page.
-async function newPageWithBeginFrameControl(browser) {
-  const browserSession = await browser.target().createCDPSession();
-  try {
-    const before = new Set(browser.targets());
-    await browserSession.send('Target.createTarget', {
-      url: 'about:blank',
-      enableBeginFrameControl: true,
-    });
-    const newTarget = await browser.waitForTarget(
-      (t) => !before.has(t) && t.type() === 'page',
-      { timeout: 10000 }
-    );
-    return await newTarget.page();
-  } finally {
-    try { await browserSession.detach(); } catch { /* ignore */ }
-  }
-}
-
 async function recordJob(browser, job, opts, capturesRoot) {
-  const page = await newPageWithBeginFrameControl(browser);
+  const page = await browser.newPage();
   try {
     await page.setViewport({
       width: opts.width,
@@ -511,16 +510,15 @@ async function recordJob(browser, job, opts, capturesRoot) {
 
     const client = await page.target().createCDPSession();
 
-    // Pause virtual time before navigation so all timers/animations the
-    // page schedules during load remain pending until we tick them.
+    // Pause virtual time before navigation so timers and animations the
+    // page schedules during load stay pending until we tick them.
     const initialVirtualTime = Date.now();
     await client.send('Emulation.setVirtualTimePolicy', {
       policy: 'pause',
       initialVirtualTime,
     });
 
-    // Allow virtual time to flow during navigation; the navigation
-    // promise resolves on the load event and we re-pause immediately.
+    // Allow virtual time to flow during navigation/load, then re-pause.
     const navigation =
       job.mode === 'bundle'
         ? page.setContent(job.bundleHtml, { waitUntil: 'load' })
@@ -544,36 +542,28 @@ async function recordJob(browser, job, opts, capturesRoot) {
     fs.rmSync(captureDir, { recursive: true, force: true });
     fs.mkdirSync(captureDir, { recursive: true });
 
+    // Pause whatever animations exist already (e.g. fade-ins triggered by
+    // CSS rules with auto-playing keyframes).
+    await syncAnimationsTo(page, await page.evaluate(() => Date.now()));
+
     const tickMs = 1000 / opts.fps;
-    // Track the compositor's frame timestamp in absolute virtual ms,
-    // continuing from wherever virtual time landed after navigation.
-    let frameTimeTicks = await page.evaluate(() => Date.now());
+    let absVirtualMs = await page.evaluate(() => Date.now());
 
     for (let i = 1; i <= job.totalFrames; i++) {
-      frameTimeTicks += tickMs;
-      // Advance the timer clock so any setTimeout/setInterval/rAF in the
-      // next 16.67 ms fires.
+      absVirtualMs += tickMs;
+      // Advance the JS timer clock; setTimeout/setInterval/rAF callbacks
+      // for the next tickMs of virtual time fire here. New CSS transitions
+      // may be created as a side effect.
       await advanceVirtualTime(client, tickMs);
-      // Render and capture in one shot. frameTimeTicks tells the
-      // compositor to evaluate CSS animations/transitions at this exact
-      // virtual moment, so the captured pixels match the timer state.
-      const result = await client.send('HeadlessExperimental.beginFrame', {
-        frameTimeTicks,
-        interval: tickMs,
-        noDisplayUpdates: false,
-        screenshot: { format: 'png' },
-      });
+      // Snap every Animation (existing and newly-created) to absolute
+      // virtual time. This is what makes CSS transitions/animations
+      // advance in lockstep with the JS clock.
+      await syncAnimationsTo(page, absVirtualMs);
       const fileName = String(i).padStart(4, '0') + '.png';
-      if (!result.screenshotData) {
-        throw new Error(
-          `HeadlessExperimental.beginFrame returned no screenshot for ${job.label} frame ${i}. ` +
-          `Make sure the browser was launched with --enable-begin-frame-control and headless: 'shell'.`
-        );
-      }
-      fs.writeFileSync(
-        path.join(captureDir, fileName),
-        Buffer.from(result.screenshotData, 'base64')
-      );
+      await page.screenshot({
+        path: path.join(captureDir, fileName),
+        type: 'png',
+      });
       if (i % opts.fps === 0 || i === job.totalFrames) {
         process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
       }
@@ -581,11 +571,8 @@ async function recordJob(browser, job, opts, capturesRoot) {
     process.stdout.write('\n');
     return captureDir;
   } finally {
-    // Cleanup must not mask the actual recording outcome. chrome-headless-shell
-    // sometimes drops the CDP connection after the final beginFrame call, which
-    // would otherwise turn a successful recording into a thrown error and skip
-    // ffmpeg. If `try` threw, JS still re-throws the original error after this
-    // silent catch runs.
+    // Cleanup errors must not mask a real recording error from the try
+    // block. JS re-throws the original error after this silent catch.
     try { await page.close(); } catch { /* ignore */ }
   }
 }
@@ -677,19 +664,8 @@ async function main() {
 
   try {
     const browser = await puppeteer.launch({
-      // 'shell' = chrome-headless-shell. Required for HeadlessExperimental.
-      // beginFrame, which is the only way to drive the compositor's frame
-      // time deterministically. New headless mode (`headless: true`) does
-      // not expose this domain.
-      headless: 'shell',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        // Required for HeadlessExperimental.beginFrame to work.
-        '--enable-begin-frame-control',
-        // Force the compositor to finish all queued work before each draw.
-        '--run-all-compositor-stages-before-draw',
-      ],
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     });
 

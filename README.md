@@ -53,15 +53,14 @@ In **directory mode** (no path args, or when a directory is passed) `h2v` skips 
 
 ## How it works
 
-1. Each animation is opened in `chrome-headless-shell` at the chosen viewport.
-2. Before any page script runs, `h2v` pauses Chromium's timer clock using `Emulation.setVirtualTimePolicy` (CDP). `Date`, `performance.now`, `setTimeout`, `setInterval`, and `requestAnimationFrame` only advance when `h2v` hands out a budget.
+1. Each animation is opened in headless Chrome at the chosen viewport.
+2. Before any page script runs, `h2v` pauses Chromium's JS timer clock using `Emulation.setVirtualTimePolicy` (CDP). `Date`, `performance.now`, `setTimeout`, `setInterval`, and `requestAnimationFrame` only advance when `h2v` hands out a budget.
 3. For each output frame:
-   - `h2v` advances the timer clock by `1000 / fps` ms so any pending JS timers fire.
-   - It then calls `HeadlessExperimental.beginFrame` with a matching `frameTimeTicks` value. This tells the compositor to evaluate CSS `animation`/`transition` properties at exactly that virtual moment and renders one frame. The same call captures the screenshot, so the saved PNG can't race ongoing rendering.
+   - `h2v` advances the timer clock by `1000 / fps` ms so any pending JS timers fire (and any CSS transitions they trigger get created).
+   - It then evaluates a snippet in the page that walks `document.getAnimations()`, pauses every running animation, and sets each one's `currentTime` to the elapsed virtual time. This pins CSS transitions, CSS keyframe animations, and Web Animations API animations to the same virtual clock as the JS timers, so they advance in lockstep.
+   - A PNG is captured.
 4. PNGs go to `./captures/<job>/0001.png` … and ffmpeg stitches them into MP4s with `-c:v libx264 -pix_fmt yuv420p -crf 18`.
 5. `./captures/` is wiped on exit — both on success and failure — unless `--no-ffmpeg` is set.
-
-The browser is launched with `--enable-begin-frame-control` and `--run-all-compositor-stages-before-draw` so the compositor commits all queued work for each `beginFrame` before the screenshot is taken.
 
 ---
 
@@ -142,6 +141,7 @@ Environment variables:
 
 - **No recursion.** Directory expansion only finds `*.html` at the top level of the named directory.
 - **Single-shot per page.** Each animation is recorded by playing through once from t=0. If your animation loops, the recording stops at the configured duration regardless.
+- **SMIL animations are not virtualized.** SVG `<animate>` and `<animateTransform>` elements aren't reachable through `document.getAnimations()`, so their timing isn't snapped to virtual time. CSS transitions and CSS keyframe animations on SVG (e.g. animating `stroke-dashoffset` via a `transition` rule) are fine.
 
 ---
 
