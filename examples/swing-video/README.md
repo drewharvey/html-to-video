@@ -1,6 +1,6 @@
 # Swing Modernization Toolkit — example bundle
 
-A worked example of a multi-frame storyboard processed by `claudevid`. Twelve
+A worked example of a multi-frame storyboard processed by `h2v`. Twelve
 HTML animations describe a ~1:50 product video for the Vaadin Swing
 Modernization Toolkit; each is captured as its own 4K MP4 at 60fps.
 
@@ -20,7 +20,7 @@ Modernization Toolkit; each is captured as its own 4K MP4 at 60fps.
 From the project root:
 
 ```
-claudevid export examples/swing-video/all-frames-bundle.html
+h2v export examples/swing-video/all-frames-bundle.html
 ```
 
 Output: `output/all-frames-bundle/frame-01.mp4` … `frame-12.mp4`.
@@ -28,7 +28,7 @@ Output: `output/all-frames-bundle/frame-01.mp4` … `frame-12.mp4`.
 For light-mode variants:
 
 ```
-claudevid export examples/swing-video/all-frames-bundle.html --theme both
+h2v export examples/swing-video/all-frames-bundle.html --theme both
 ```
 
 Adds `frame-01-light.mp4` etc. alongside the dark versions.
@@ -44,7 +44,7 @@ Each animation in the bundle is wrapped in markers:
 <!-- ===== FRAME_END id="frame-01" ===== -->
 ```
 
-`claudevid` reads every `FRAME_START` marker and produces one MP4 per frame
+`h2v` reads every `FRAME_START` marker and produces one MP4 per frame
 using the marker's `id` for the filename and `capture_duration` for the
 recording length. The `title` and `filename` attributes are informational —
 `title` shows up in console logs; `filename` was used by an earlier split
@@ -61,5 +61,5 @@ node examples/swing-video/build-review.js
 open examples/swing-video/review.html
 ```
 
-This is independent of `claudevid` — it's a quick way to scrub through the
+This is independent of `h2v` — it's a quick way to scrub through the
 storyboard in a browser before committing to a full recording.

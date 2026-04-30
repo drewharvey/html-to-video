@@ -1,4 +1,4 @@
-# claudevid — Implementation Plan
+# h2v — Implementation Plan
 
 > Reference document for executing the pivot from the Swing one-off into a
 > generic HTML-animation → MP4 CLI. Designed to survive context compaction:
@@ -35,13 +35,14 @@ The user has confirmed `record.js` produces correct 4K @ 60fps output on their M
 
 | Concern | Decision |
 |---|---|
-| Tool name | `claudevid` |
-| Subcommand | `claudevid export [<paths...>]` |
+| Package name | `html-to-video` |
+| CLI command | `h2v` (primary), `html-to-video` (long alias) |
+| Subcommand | `h2v export [<paths...>]` |
 | No-arg behavior | Process every `*.html` in cwd (non-recursive) |
 | Args behavior | Process specified files; for directories, expand to `*.html` in that dir (non-recursive) |
 | Bundle detection | File contains `<!-- ===== FRAME_START` → bundle. Else single file. |
 | Bundle duration source | Each marker's `capture_duration` |
-| Single-file duration | 1) `<meta name="claudevid-duration" content="Ns">`; 2) `--duration` flag; 3) default `10s` |
+| Single-file duration | 1) `<meta name="h2v-duration" content="Ns">`; 2) `--duration` flag; 3) default `10s` |
 | FPS | 60 |
 | Viewport | 1280×720 |
 | Device scale factor | 3 (→ 3840×2160 = 4K) |
@@ -81,7 +82,7 @@ The user has confirmed `record.js` produces correct 4K @ 60fps output on their M
 - [ ] `git mv build-review.js examples/swing-video/build-review.js`
 - [ ] Update `build-review.js` paths: it currently reads `frames/` and writes `review.html` next to itself via `__dirname`. Confirm `__dirname` resolves correctly after the move (it does, since `__dirname` is the script's location). No code changes expected, just verify.
 - [ ] Update `.gitignore`: `review.html` rule should still match anywhere; verify `examples/swing-video/review.html` is ignored (it will be — the rule has no leading slash).
-- [ ] Write `examples/swing-video/README.md`: explains this is a reference example; describes the FRAME_START marker format; shows how to record it with `claudevid export all-frames-bundle.html`; explains the optional `build-review.js` review page.
+- [ ] Write `examples/swing-video/README.md`: explains this is a reference example; describes the FRAME_START marker format; shows how to record it with `h2v export all-frames-bundle.html`; explains the optional `build-review.js` review page.
 
 **Acceptance:**
 - `node examples/swing-video/build-review.js` regenerates `examples/swing-video/review.html` without errors.
@@ -98,9 +99,9 @@ Single file at top level, `cli.js`, shebang `#!/usr/bin/env node`. The current `
 Accept this surface (use plain JS, no `commander`/`yargs` dependency):
 
 ```
-claudevid export [<paths...>] [flags]
-claudevid --help | -h
-claudevid --version
+h2v export [<paths...>] [flags]
+h2v --help | -h
+h2v --version
 ```
 
 Flags:
@@ -145,7 +146,7 @@ function detectMode(htmlText) {
 }
 ```
 
-For bundles, parse out `{ id, title, filename, captureDurationSeconds }` per marker using the existing regex. For single files, parse out `<meta name="claudevid-duration" content="...">` if present (be lenient: accept `5`, `5s`, `"5s"`).
+For bundles, parse out `{ id, title, filename, captureDurationSeconds }` per marker using the existing regex. For single files, parse out `<meta name="h2v-duration" content="...">` if present (be lenient: accept `5`, `5s`, `"5s"`).
 
 ### 2d. Plan construction
 
@@ -223,15 +224,15 @@ Once `cli.js` is green, `git rm record.js`.
 ## Phase 3 — Package as a CLI
 
 - [ ] Update `package.json`:
-  - `name`: `claudevid`
+  - `name`: `html-to-video`
   - `version`: `0.1.0`
   - `description`: short tagline
-  - `bin`: `{ "claudevid": "./cli.js" }`
+  - `bin`: `{ "h2v": "./cli.js", "html-to-video": "./cli.js" }`
   - `engines.node`: `>=18`
   - keep `dependencies.puppeteer`
 - [ ] Ensure `cli.js` line 1 is `#!/usr/bin/env node`
 - [ ] `chmod +x cli.js`
-- [ ] Verify `npm link` (or `npm install -g .`) exposes `claudevid` on PATH (skip the actual install if it touches global state — just confirm package.json is shaped right)
+- [ ] Verify `npm link` (or `npm install -g .`) exposes `h2v` on PATH (skip the actual install if it touches global state — just confirm package.json is shaped right)
 
 **Acceptance:**
 - `package.json bin` is correct
@@ -250,16 +251,16 @@ Replace existing Swing-flavored README. New structure:
    npm install
    npm install -g .          # or use npx
    cd /path/to/animations
-   claudevid export
+   h2v export
    ```
 3. **Prerequisites**: Node 18+, ffmpeg on PATH. Note about ARM64 Linux + `PUPPETEER_EXECUTABLE_PATH`.
 4. **How it works** (4–5 lines): virtual JS clock so screenshots are deterministic, ffmpeg stitches into MP4.
 5. **Usage**:
-   - `claudevid export` — process all HTML in cwd
-   - `claudevid export file.html` — one file
-   - `claudevid export *.html dir/` — explicit list / dir
-6. **Setting per-file duration**: explain the `<meta name="claudevid-duration" content="Ns">` tag. Provide a copy-paste snippet for claude.ai prompts:
-   > Include `<meta name="claudevid-duration" content="Ns">` in `<head>` where N is how many seconds the animation needs to play.
+   - `h2v export` — process all HTML in cwd
+   - `h2v export file.html` — one file
+   - `h2v export *.html dir/` — explicit list / dir
+6. **Setting per-file duration**: explain the `<meta name="h2v-duration" content="Ns">` tag. Provide a copy-paste snippet for claude.ai prompts:
+   > Include `<meta name="h2v-duration" content="Ns">` in `<head>` where N is how many seconds the animation needs to play.
 7. **Bundle format** (brief): show one FRAME_START marker example, link to `examples/swing-video/`.
 8. **Flag reference** — table or definition list, all flags with defaults.
 9. **Examples**: link to `examples/swing-video/`.
@@ -276,7 +277,7 @@ Replace existing Swing-flavored README. New structure:
 - [ ] `node cli.js --help`
 - [ ] `node cli.js export --dry-run examples/swing-video/all-frames-bundle.html` → 12 jobs
 - [ ] `node cli.js export --dry-run --theme both examples/swing-video/all-frames-bundle.html` → 24 jobs
-- [ ] Create a temp single-file HTML fixture with `<meta name="claudevid-duration" content="3s">`, run `--dry-run`, confirm 3s × 60 = 180 frames
+- [ ] Create a temp single-file HTML fixture with `<meta name="h2v-duration" content="3s">`, run `--dry-run`, confirm 3s × 60 = 180 frames
 - [ ] `node examples/swing-video/build-review.js` still works
 - [ ] `node --check cli.js` passes
 
@@ -303,7 +304,7 @@ If a working browser is available in this sandbox, attempt one real recording fo
 
 ## Done definition
 
-- `claudevid export` from a directory of claude.ai-generated HTML files produces 4K MP4s in `./output/`.
+- `h2v export` from a directory of claude.ai-generated HTML files produces 4K MP4s in `./output/`.
 - Bundle files are auto-detected and produce one MP4 per FRAME_START marker.
 - Single files use the meta-tag duration, the `--duration` flag, or default 10s, in that priority.
 - The Swing example lives entirely under `examples/swing-video/` and still records correctly.

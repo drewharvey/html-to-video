@@ -1,9 +1,10 @@
 {
-  "name": "claudevid",
+  "name": "html-to-video",
   "version": "0.1.0",
-  "description": "Record HTML animations as 4K MP4s. Drop a file in a folder, run `claudevid export`, get a video.",
+  "description": "Record HTML animations as 4K MP4s. Drop a file in a folder, run `h2v export`, get a video.",
   "bin": {
-    "claudevid": "./cli.js"
+    "h2v": "./cli.js",
+    "html-to-video": "./cli.js"
   },
   "main": "./cli.js",
   "engines": {

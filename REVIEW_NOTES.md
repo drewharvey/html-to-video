@@ -16,19 +16,19 @@ What I *can* do here:
 
 What needs your verification on macOS:
 - Real recording produces correct 4K @ 60fps MP4s
-- `claudevid export` (no args) in a directory works as expected
+- `h2v export` (no args) in a directory works as expected
 - `--theme both` produces both dark and light variants correctly
-- `<meta name="claudevid-duration">` is picked up from a single-file animation
+- `<meta name="h2v-duration">` is picked up from a single-file animation
 
 ## Items added during implementation
 
 ### Verified in sandbox (dry-run only, no browser)
-- `claudevid --help` and `--version` print correctly
-- `claudevid export --dry-run examples/swing-video/all-frames-bundle.html` lists 12 frames with correct durations and output paths
+- `h2v --help` and `--version` print correctly
+- `h2v export --dry-run examples/swing-video/all-frames-bundle.html` lists 12 frames with correct durations and output paths
 - Directory mode picks up `*.html` and skips dotfiles + `review.html`
 - Explicitly named files bypass skip rules
 - `--theme both` produces dark and light jobs with `-light` suffix
-- `<meta name="claudevid-duration" content="3s">` is read and shown as "from meta tag" in plan
+- `<meta name="h2v-duration" content="3s">` is read and shown as "from meta tag" in plan
 - `--duration` flag overrides default for files without meta
 - `--out` is rejected when more than one MP4 would be produced
 - `--out` accepted for single-job runs (path printed correctly)
@@ -44,12 +44,12 @@ What needs your verification on macOS:
 - ffmpeg availability check fires before the browser launches
 
 ### Installation check (one-time)
-- From the project root: `npm install -g .` (or `npm link`) should put `claudevid` on PATH. Verify with `which claudevid` and `claudevid --version`.
+- From the project root: `npm install -g .` (or `npm link`) should put `h2v` on PATH. Verify with `which h2v` and `h2v --version`.
 
 ### Suggested first real run
 ```
 cd examples/swing-video
-claudevid export all-frames-bundle.html
+h2v export all-frames-bundle.html
 # Expect output/all-frames-bundle/frame-01.mp4 ... frame-12.mp4
 # Compare against your previously-produced 4K MP4s — should be identical.
 ```

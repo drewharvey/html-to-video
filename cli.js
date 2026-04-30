@@ -24,19 +24,19 @@ const FRAME_BLOCK_RE =
   /<!--\s*=+\s*FRAME_START\s+(.*?)\s*=+\s*-->\s*([\s\S]*?)\s*<!--\s*=+\s*FRAME_END\b[^>]*?-->/g;
 const FRAME_START_PROBE = /<!--\s*=+\s*FRAME_START\b/;
 const META_DURATION_RE =
-  /<meta\s+name=["']claudevid-duration["']\s+content=["']?(\d+(?:\.\d+)?)\s*s?["']?\s*\/?>/i;
+  /<meta\s+name=["']h2v-duration["']\s+content=["']?(\d+(?:\.\d+)?)\s*s?["']?\s*\/?>/i;
 const ATTR_RE = /(\w+)="([^"]*)"/g;
 
 // =========================================================================
 // Help & version
 // =========================================================================
 
-const HELP_TEXT = `claudevid v${VERSION} — record HTML animations as 4K MP4s
+const HELP_TEXT = `h2v v${VERSION} — record HTML animations as 4K MP4s
 
 USAGE
-  claudevid export [<paths...>] [flags]
-  claudevid --help
-  claudevid --version
+  h2v export [<paths...>] [flags]
+  h2v --help
+  h2v --version
 
 ARGUMENTS
   paths     One or more HTML files or directories. With no paths, every
@@ -67,7 +67,7 @@ FLAGS
   --version           Show version.
 
 PER-FILE METADATA
-  Add <meta name="claudevid-duration" content="Ns"> in the <head> of a
+  Add <meta name="h2v-duration" content="Ns"> in the <head> of a
   single-file animation to set its capture duration. The value is in
   seconds and may be an integer or a decimal.
 
@@ -100,7 +100,7 @@ function parseArgs(argv) {
   const [command, ...rest] = args;
   if (command !== 'export') {
     console.error(`error: unknown command: ${command}`);
-    console.error(`Did you mean: claudevid export ${args.join(' ')} ?`);
+    console.error(`Did you mean: h2v export ${args.join(' ')} ?`);
     process.exit(2);
   }
 
