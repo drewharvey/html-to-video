@@ -914,7 +914,12 @@ async function runReview(paths, opts) {
     process.on('SIGTERM', () => { cleanup(); process.exit(0); });
     process.on('exit', cleanup);
 
-    // Keep the process alive until SIGINT/SIGTERM.
+    // Keep the event loop alive until a signal arrives. `await new Promise`
+    // alone is NOT enough on macOS — Node exits when there are no active
+    // libuv handles (timers, sockets, etc.), and a pending Promise isn't
+    // a handle. setInterval registers a real timer handle that keeps the
+    // loop running until the signal handler calls process.exit().
+    setInterval(() => {}, 1 << 30);
     await new Promise(() => {});
   }
 }
