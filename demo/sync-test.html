@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="h2v-duration" content="1.5s">
+  <title>h2v sync test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #0b0b0c; color: #e6e6e8;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    body {
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 40px; gap: 24px;
+    }
+    .header h1 {
+      font-size: 18px; font-weight: 600; margin-bottom: 6px;
+    }
+    .header p {
+      font-size: 13px; color: #9a9aa1; line-height: 1.5;
+    }
+    .header strong { color: #e6e6e8; font-weight: 600; }
+    .row { display: flex; flex-direction: column; gap: 8px; }
+    .label {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-family: monospace; font-size: 14px;
+    }
+    .label .name { color: #9a9aa1; }
+    .label .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .track {
+      width: 100%; height: 36px;
+      background: #1a1a1d; border: 1px solid #2a2a2d;
+      border-radius: 4px; overflow: hidden;
+    }
+    .fill {
+      height: 100%; width: 0%;
+    }
+    .fill-css { background: #4ade80; transition: width 1s linear; }
+    .fill-js  { background: #60a5fa; }
+    .marker {
+      position: relative; height: 12px; margin-top: 4px;
+    }
+    .marker-line {
+      position: absolute; top: 0; bottom: 0; width: 2px;
+      background: #f87171; left: 0%;
+      transition: left 1s linear;
+    }
+    .marker-label {
+      position: absolute; top: -1.4em;
+      transform: translateX(-50%);
+      color: #f87171; font-family: monospace; font-size: 11px;
+      white-space: nowrap;
+    }
+    .marker-label-text {
+      transition: left 1s linear;
+      position: absolute; left: 0%;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>h2v sync test</h1>
+    <p>
+      Both bars should fill from <strong>0 %</strong> to <strong>100 %</strong>
+      at the same rate over 1 second. If the
+      <span style="color:#4ade80">green CSS bar</span> finishes earlier than the
+      <span style="color:#60a5fa">blue JS bar</span>, JS-vs-CSS time has
+      desynced during capture.
+    </p>
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <span class="name">CSS transition</span>
+      <span class="pct" id="css-pct">0&nbsp;%</span>
+    </div>
+    <div class="track"><div class="fill fill-css" id="css-bar"></div></div>
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <span class="name">JS setInterval</span>
+      <span class="pct" id="js-pct">0&nbsp;%</span>
+    </div>
+    <div class="track"><div class="fill fill-js" id="js-bar"></div></div>
+  </div>
+
+  <script>
+    const cssBar = document.getElementById('css-bar');
+    const cssPct = document.getElementById('css-pct');
+    const jsBar  = document.getElementById('js-bar');
+    const jsPct  = document.getElementById('js-pct');
+
+    // CSS-driven: kick off the transition on the next paint.
+    requestAnimationFrame(() => { cssBar.style.width = '100%'; });
+
+    // JS-driven: tick 0 → 100 % over exactly 1000 ms using performance.now().
+    let progress = 0;
+    const totalMs = 1000;
+    const start = performance.now();
+    const iv = setInterval(() => {
+      const elapsed = performance.now() - start;
+      progress = Math.min(100, (elapsed / totalMs) * 100);
+      jsBar.style.width = progress + '%';
+      jsPct.textContent = Math.round(progress) + ' %';
+      if (progress >= 100) clearInterval(iv);
+    }, 16);
+
+    // Read the CSS bar's actual rendered width and label it. The label is
+    // for sanity only — the bar itself is the source of truth.
+    setInterval(() => {
+      const w  = parseFloat(getComputedStyle(cssBar).width);
+      const tw = parseFloat(getComputedStyle(cssBar.parentElement).width);
+      cssPct.textContent = Math.round((w / tw) * 100) + ' %';
+    }, 16);
+  </script>
+</body>
+</html>

@@ -64,19 +64,18 @@ npx playwright install chromium
 
 ## Test fixture for fast iteration
 
-`/tmp/h2v-test/sync-test.html` is a 1-second, low-resolution fixture with two parallel bars:
-- Top: CSS `transition: width 1s linear`
-- Bottom: JS `setInterval` writing `width = X%`
+`demo/sync-test.html` is a 1.5-second, low-resolution-friendly fixture with two parallel bars:
+- Top: CSS `transition: width 1s linear` (green)
+- Bottom: JS `setInterval` writing `width = X%` (blue)
 
-If they fill in lockstep, synchronization is working. Inspect output PNGs by `Read`-ing them — Claude Code reads images.
+If they fill in lockstep, synchronization is working. Inspect by exporting to MP4 (or PNGs with `--no-ffmpeg`), then `Read` an output frame — Claude Code reads images.
 
-Quick run:
+Quick run (low-res, ~15 s wall time at the default 10× slowdown):
 ```
-cd /tmp/h2v-test
-node /Users/drewharvey/Projects/claude-animation-app/cli.js export sync-test.html \
-  --no-ffmpeg --width 480 --height 200 --scale 1
+node cli.js export demo/sync-test.html --width 640 --height 360 --scale 1
+ffmpeg -y -i output/sync-test.mp4 -ss 0.5 -frames:v 1 /tmp/mid.png
 ```
-Then `Read /tmp/h2v-test/captures/sync-test/0015.png` for the midpoint frame; both bars should read ~25% (frame 15 of 60 = 25% of a 1s animation).
+Both bars should read ~50 % at the midpoint (0.5 s into the 1.5 s clip). At 1.0 s both should be at 100 % (the animation completes by then; the last 0.5 s shows the settled state).
 
 ## In-repo demo
 
