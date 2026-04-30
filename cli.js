@@ -15,6 +15,7 @@ const DEFAULTS = {
   scale: 3,
   crf: 18,
   duration: 10,
+  slowdown: 10,
   outDir: 'output',
 };
 
@@ -55,6 +56,12 @@ FLAGS
                       1280×720 × 3 = 4K).
   --crf <N>           x264 CRF (default: ${DEFAULTS.crf}; lower = bigger/better;
                       18 is visually lossless).
+  --slowdown <N>      Real-time slowdown factor (default: ${DEFAULTS.slowdown}). The browser
+                      runs animations at 1/N speed so screenshots can keep
+                      up; the resulting MP4 plays back at original speed.
+                      Total recording wall time = animation duration × N.
+                      Use 1 to disable (only works if screenshots fit in
+                      one frame interval, ~16 ms at 60 fps).
   --theme <m>         dark | light | both (default: dark). 'both' produces
                       two MP4s per animation; light has a -light suffix.
   --out-dir <path>    Output directory (default: ./${DEFAULTS.outDir}).
@@ -112,6 +119,7 @@ function parseArgs(argv) {
     height: DEFAULTS.height,
     scale: DEFAULTS.scale,
     crf: DEFAULTS.crf,
+    slowdown: DEFAULTS.slowdown,
     themes: ['dark'],
     outDir: DEFAULTS.outDir,
     outOverride: null,
@@ -135,6 +143,7 @@ function parseArgs(argv) {
     else if (a === '--height') opts.height = parsePositiveInt(requireValue('--height'), '--height');
     else if (a === '--scale') opts.scale = parsePositiveInt(requireValue('--scale'), '--scale');
     else if (a === '--crf') opts.crf = parseIntInRange(requireValue('--crf'), '--crf', 0, 51);
+    else if (a === '--slowdown') opts.slowdown = parsePositiveInt(requireValue('--slowdown'), '--slowdown');
     else if (a === '--theme') opts.themes = parseThemeFlag(requireValue('--theme'));
     else if (a === '--out-dir') opts.outDir = requireValue('--out-dir');
     else if (a === '--out') opts.outOverride = requireValue('--out');
@@ -432,70 +441,64 @@ function printPlan(jobs, opts) {
 }
 
 // =========================================================================
-// Virtual time + Web Animations API per-frame control
+// Time slowdown for synchronized JS + CSS animation capture
 // =========================================================================
 //
-// We virtualize timing in two layers:
+// Goal: capture N frames per second of an animation that "should" play at
+// real-time speed. Screenshots are slow (4K PNGs take ~150 ms each), so we
+// can't capture at the target framerate in real time without missing
+// frames. The fix: slow EVERYTHING in the page by a factor S.
 //
-//   1. Emulation.setVirtualTimePolicy (CDP) — virtualizes the JS *timer*
-//      clock. Date.now, performance.now, setTimeout, setInterval, and
-//      requestAnimationFrame only advance when we hand out a budget.
+// 1. JS time sources are wrapped before any page script runs:
+//    - `setTimeout`/`setInterval` delays are multiplied by S
+//    - `performance.now()` returns "real elapsed since page load" / S
+//    - `Date.now()` returns "page-load epoch + (real elapsed since page
+//       load) / S"
+//    - `requestAnimationFrame` callback timestamps are scaled the same way
 //
-//   2. document.getAnimations() in the page — every CSS transition,
-//      CSS keyframe animation, and Web Animations API animation is
-//      reachable through this list. After each virtual-time tick we
-//      pause every running animation and set its `currentTime` to the
-//      elapsed virtual time since its `startTime`. This sidesteps the
-//      compositor's own clock entirely, which is necessary because
-//      HeadlessExperimental.beginFrame (the "proper" way to drive the
-//      compositor) is not supported on macOS.
+// 2. CSS animations and transitions are slowed via the CDP Animation
+//    domain: `Animation.setPlaybackRate({ playbackRate: 1 / S })`.
 //
-// SMIL animations (<animate> in SVG) are NOT covered by this — they
-// don't appear in document.getAnimations(). The Swing example uses
-// CSS transitions throughout, which are covered.
+// Both layers slow at the same factor, so JS-driven and CSS-driven
+// motion stay in lockstep. Then we capture frames at S × the target frame
+// interval in real time (e.g. 100 ms real time per frame for 60 fps with
+// S = 6). Each captured frame is at the correct moment of the original
+// animation; output encoded at the target fps plays back at the original
+// speed.
+//
+// Trade-off: total recording wall time = (animation duration) × S. The
+// default S = 10 keeps recordings tolerable for short animations and
+// gives screenshots plenty of time even at 4K.
+//
+// Caveat: this approach doesn't slow Workers, WebSockets, or fetch (none
+// of which are typical in claude-generated animations).
 
-const VIRTUAL_TIME_OPTS = {
-  // Pause again after running this many tasks in a row, even if budget
-  // hasn't expired. Prevents tight `setInterval` loops from starving
-  // the budget timer.
-  maxVirtualTimeTaskStarvationCount: 100,
-};
-const NAV_BUDGET_MS = 30000;
-
-function advanceVirtualTime(client, ms) {
-  return new Promise((resolve) => {
-    client.once('Emulation.virtualTimeBudgetExpired', resolve);
-    client.send('Emulation.setVirtualTimePolicy', {
-      policy: 'pauseIfNetworkFetchesPending',
-      budget: ms,
-      ...VIRTUAL_TIME_OPTS,
-    });
+const SHIM_SOURCE = `(function(sf) {
+  if (sf === 1) return;
+  var rST = window.setTimeout.bind(window);
+  var rSI = window.setInterval.bind(window);
+  window.setTimeout = function(fn, ms) {
+    var args = Array.prototype.slice.call(arguments, 2);
+    return rST.apply(null, [fn, (ms || 0) * sf].concat(args));
+  };
+  window.setInterval = function(fn, ms) {
+    var args = Array.prototype.slice.call(arguments, 2);
+    return rSI.apply(null, [fn, (ms || 1) * sf].concat(args));
+  };
+  var rPerf = performance.now.bind(performance);
+  var perfStart = rPerf();
+  Object.defineProperty(performance, 'now', {
+    value: function() { return (rPerf() - perfStart) / sf; },
+    configurable: true, writable: true,
   });
-}
-
-// Snap every Animation in the page to a specific virtual time. Run after
-// every virtual-time advance and before every screenshot.
-//
-// We deliberately do NOT call anim.pause(). Pausing every animation puts
-// Chromium in a state where the compositor stops scheduling BeginFrames
-// (no work to do), which makes Page.captureScreenshot hang waiting for a
-// frame that's never drawn. By leaving animations "running" but
-// re-anchoring their currentTime every video frame, we get a small,
-// consistent phase shift (real time elapsed between setCurrentTime and
-// the screenshot) instead of unbounded drift, and the screenshot
-// pipeline keeps doing what it needs to do.
-async function syncAnimationsTo(page, virtualNowMs) {
-  await page.evaluate((virtualNow) => {
-    for (const anim of document.getAnimations()) {
-      if (anim.startTime != null) {
-        const elapsed = virtualNow - anim.startTime;
-        if (elapsed >= 0) {
-          try { anim.currentTime = elapsed; } catch (_) { /* finished */ }
-        }
-      }
-    }
-  }, virtualNowMs);
-}
+  var rDate = Date.now.bind(Date);
+  var dateStart = rDate();
+  Date.now = function() { return dateStart + (rDate() - dateStart) / sf; };
+  var rRAF = window.requestAnimationFrame.bind(window);
+  window.requestAnimationFrame = function(cb) {
+    return rRAF(function(realTs) { cb((realTs - perfStart) / sf); });
+  };
+})`;
 
 // =========================================================================
 // Recording
@@ -510,29 +513,24 @@ async function recordJob(browser, job, opts, capturesRoot) {
       deviceScaleFactor: opts.scale,
     });
 
+    // Inject the JS time-slowdown shim before any page script runs.
+    await page.evaluateOnNewDocument(`${SHIM_SOURCE}(${opts.slowdown});`);
+
+    if (job.mode === 'bundle') {
+      await page.setContent(job.bundleHtml, { waitUntil: 'load' });
+    } else {
+      await page.goto('file://' + job.inputPath, { waitUntil: 'load' });
+    }
+
+    // Slow CSS animations / transitions / Web Animations API entries
+    // proportionally. Must be set after navigation so the timeline exists.
     const client = await page.target().createCDPSession();
-
-    // Pause virtual time before navigation so timers and animations the
-    // page schedules during load stay pending until we tick them.
-    const initialVirtualTime = Date.now();
-    await client.send('Emulation.setVirtualTimePolicy', {
-      policy: 'pause',
-      initialVirtualTime,
-    });
-
-    // Allow virtual time to flow during navigation/load, then re-pause.
-    const navigation =
-      job.mode === 'bundle'
-        ? page.setContent(job.bundleHtml, { waitUntil: 'load' })
-        : page.goto('file://' + job.inputPath, { waitUntil: 'load' });
-
-    await client.send('Emulation.setVirtualTimePolicy', {
-      policy: 'pauseIfNetworkFetchesPending',
-      budget: NAV_BUDGET_MS,
-      ...VIRTUAL_TIME_OPTS,
-    });
-    await navigation;
-    await client.send('Emulation.setVirtualTimePolicy', { policy: 'pause' });
+    await client.send('Animation.enable');
+    if (opts.slowdown !== 1) {
+      await client.send('Animation.setPlaybackRate', {
+        playbackRate: 1 / opts.slowdown,
+      });
+    }
 
     if (job.theme === 'light') {
       await page.evaluate(() =>
@@ -544,23 +542,13 @@ async function recordJob(browser, job, opts, capturesRoot) {
     fs.rmSync(captureDir, { recursive: true, force: true });
     fs.mkdirSync(captureDir, { recursive: true });
 
-    // Pause whatever animations exist already (e.g. fade-ins triggered by
-    // CSS rules with auto-playing keyframes).
-    await syncAnimationsTo(page, await page.evaluate(() => Date.now()));
-
-    const tickMs = 1000 / opts.fps;
-    let absVirtualMs = await page.evaluate(() => Date.now());
-
+    // Pace screenshots at S × frame-interval real ms.
+    const tickMsReal = (1000 / opts.fps) * opts.slowdown;
+    const startReal = Date.now();
     for (let i = 1; i <= job.totalFrames; i++) {
-      absVirtualMs += tickMs;
-      // Advance the JS timer clock; setTimeout/setInterval/rAF callbacks
-      // for the next tickMs of virtual time fire here. New CSS transitions
-      // may be created as a side effect.
-      await advanceVirtualTime(client, tickMs);
-      // Snap every Animation (existing and newly-created) to absolute
-      // virtual time. This is what makes CSS transitions/animations
-      // advance in lockstep with the JS clock.
-      await syncAnimationsTo(page, absVirtualMs);
+      const target = startReal + i * tickMsReal;
+      const wait = target - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       const fileName = String(i).padStart(4, '0') + '.png';
       await page.screenshot({
         path: path.join(captureDir, fileName),
@@ -573,9 +561,7 @@ async function recordJob(browser, job, opts, capturesRoot) {
     process.stdout.write('\n');
     return captureDir;
   } finally {
-    // Cleanup errors must not mask a real recording error from the try
-    // block. JS re-throws the original error after this silent catch.
-    try { await page.close(); } catch { /* ignore */ }
+    try { await page.close(); } catch { /* ignore cleanup errors */ }
   }
 }
 
@@ -661,7 +647,8 @@ async function main() {
 
   console.log(
     `\nRecording at ${opts.width * opts.scale}×${opts.height * opts.scale} ` +
-    `(${opts.width}×${opts.height} × ${opts.scale}), ${opts.fps}fps, crf ${opts.crf}.`
+    `(${opts.width}×${opts.height} × ${opts.scale}), ${opts.fps}fps, crf ${opts.crf}, ` +
+    `slowdown ${opts.slowdown}× (wall time = animation × ${opts.slowdown}).`
   );
 
   try {

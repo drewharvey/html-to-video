@@ -54,25 +54,36 @@ h2v export all-frames-bundle.html
 # Compare against your previously-produced 4K MP4s — should be identical.
 ```
 
-### CSS-vs-JS clock fix (frame-09), evolved approach
-Three earlier attempts didn't pan out:
+### CSS-vs-JS clock fix (frame-09), final working approach
+Four earlier attempts didn't pan out:
 1. `Emulation.setVirtualTimePolicy` alone — virtualizes JS timers but
    not the compositor; CSS transitions still ticked on wall time.
 2. Adding `HeadlessExperimental.beginFrame` to drive the compositor —
    blocked by Chromium: `BeginFrameControl is not supported on MacOS yet`.
-3. Walking `document.getAnimations()` and calling `anim.pause()` per
-   frame — that put the compositor into a state with no work to do, so
-   it stopped scheduling BeginFrames, and `Page.captureScreenshot`
-   timed out waiting for a frame that was never drawn.
+3. Walking `document.getAnimations()` and `setCurrentTime` only — JS
+   reported the right state but Chromium rendered the compositor's
+   real-time-advanced state.
+4. Adding `anim.pause()` to freeze the rendered state — broke
+   `Page.captureScreenshot` because the compositor stopped scheduling
+   BeginFrames when it had nothing to render.
 
-Current approach: same per-frame walk over `document.getAnimations()`,
-but only `currentTime` is re-set; we no longer call `pause()`.
-Animations keep ticking at compositor wall-clock rate, but we
-re-anchor each one to virtual time on every frame, so the captured
-screenshot is at most a "screenshot latency"'s worth of drift ahead
-of the intended state. That shows up in the recording as a small
-fixed phase shift across the entire animation, not a speed change —
-visually imperceptible.
+Working approach: instead of trying to pause Chromium's clocks, **slow
+everything by a factor `S`** (default 10) and capture at slowed wall
+time. JS shim multiplies `setTimeout`/`setInterval`/`Date.now`/
+`performance.now`/rAF-timestamp by 1/S. CDP `Animation.setPlaybackRate(1/S)`
+slows CSS animations and transitions. Capture loop sleeps
+`(1000/fps) × S` ms between screenshots. The output MP4 encoded at the
+target fps plays back at the original speed.
+
+Verified in sandbox by recording a custom sync-test fixture with two
+parallel bars (one CSS transition, one JS setInterval) — both reach
+50% at frame 30 of 60 and 100% at frame 60. Also recorded
+`frame-09-automation.html`: ring fill and `~%` counter advance in
+lockstep through the entire animation.
+
+Trade-off: recording wall time = animation × S. With S=10, a 5-second
+animation takes 50 seconds. The user can lower `--slowdown` if their
+machine handles screenshots fast enough.
 
 Things to watch for on your Mac:
 - `frame-09.mp4` should now show the ring fill and the % counter

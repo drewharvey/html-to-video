@@ -64,7 +64,13 @@ The user has confirmed `record.js` produces correct 4K @ 60fps output on their M
 ## Watch out for (gotchas already hit)
 
 - **`</script>` escaping** — if any future code embeds HTML inside a `<script>` block, replace `</` with `<\/` in the embedded JSON, otherwise the HTML tokenizer terminates the outer script early. Not expected to recur in `cli.js`, but flagged.
-- **Virtual time = setVirtualTimePolicy + per-frame `document.getAnimations()` snap** — `Emulation.setVirtualTimePolicy` virtualizes only the JS *timer* clock (Date, setTimeout, rAF). The compositor (which runs CSS animations/transitions) has its own clock that ignores it. We tried `HeadlessExperimental.beginFrame` to drive the compositor; that doesn't work on macOS ("BeginFrameControl is not supported on MacOS yet"). The current approach instead pauses every Animation in the page after each tick and sets `currentTime` to the elapsed virtual time. This works on macOS, doesn't need any non-default browser flags, and uses public Web APIs. Don't switch to beginFrame; don't switch to chrome-headless-shell. SMIL animations (`<animate>`) aren't covered — if a future use case needs them, we'd need a different strategy.
+- **Synchronization approach: time slowdown, not virtual time.** Earlier attempts tried to pause Chromium's clock(s) and step them in fixed increments. None of them worked end-to-end: `setVirtualTimePolicy` alone leaves CSS on wall time; `HeadlessExperimental.beginFrame` is unavailable on macOS; pausing animations to stop drift hangs `Page.captureScreenshot` because the compositor stops scheduling BeginFrames. The working approach instead **slows everything by a factor S** (default 10) and captures at slowed real time:
+  - JS shim wraps `setTimeout`, `setInterval`, `Date.now`, `performance.now`, and `requestAnimationFrame` to scale by 1/S
+  - `Animation.setPlaybackRate(1/S)` (CDP Animation domain) slows CSS animations and transitions
+  - Capture loop sleeps `(1000/fps) × S` ms between screenshots
+  - MP4 is encoded at `fps`, so playback runs at the original speed
+- **Don't reintroduce virtual time pause / beginFrame / animation pause.** Each of those was tried and failed (see above). The slowdown approach is the one that actually works on macOS.
+- **Recording wall time = animation_duration × slowdown.** Acceptable for short animations (typical Claude output), painful for long ones. Tunable via `--slowdown`.
 - **Chrome on aarch64** — Google publishes no ARM64 Chrome; Puppeteer's bundled download falls back to x64 ELF that won't execute on aarch64. The `PUPPETEER_EXECUTABLE_PATH` hook is the workaround. Sandbox runs need this; user's Mac doesn't.
 - **`captures/` cleanup must run in `finally`** — both success and exception paths. Already done in `record.js`; preserve.
 - **Browser reuse** — launch one browser, open a new page per animation. Existing pattern; don't regress to one browser per file.

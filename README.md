@@ -54,13 +54,16 @@ In **directory mode** (no path args, or when a directory is passed) `h2v` skips 
 ## How it works
 
 1. Each animation is opened in headless Chrome at the chosen viewport.
-2. Before any page script runs, `h2v` pauses Chromium's JS timer clock using `Emulation.setVirtualTimePolicy` (CDP). `Date`, `performance.now`, `setTimeout`, `setInterval`, and `requestAnimationFrame` only advance when `h2v` hands out a budget.
-3. For each output frame:
-   - `h2v` advances the timer clock by `1000 / fps` ms so any pending JS timers fire (and any CSS transitions they trigger get created).
-   - It then evaluates a snippet in the page that walks `document.getAnimations()`, pauses every running animation, and sets each one's `currentTime` to the elapsed virtual time. This pins CSS transitions, CSS keyframe animations, and Web Animations API animations to the same virtual clock as the JS timers, so they advance in lockstep.
-   - A PNG is captured.
-4. PNGs go to `./captures/<job>/0001.png` … and ffmpeg stitches them into MP4s with `-c:v libx264 -pix_fmt yuv420p -crf 18`.
-5. `./captures/` is wiped on exit — both on success and failure — unless `--no-ffmpeg` is set.
+2. Before any page script runs, `h2v` injects a small shim that **slows every JS time source** by a factor `S` (`--slowdown`, default 10):
+   - `setTimeout` / `setInterval` delays are multiplied by `S`
+   - `performance.now()` and `Date.now()` return real-elapsed-time / `S`
+   - `requestAnimationFrame` callback timestamps are scaled the same way
+3. After navigation, `h2v` slows CSS animations and transitions by the matching factor via the CDP Animation domain (`Animation.setPlaybackRate(1/S)`).
+4. With both layers slowed identically, a 1-second animation takes `S` seconds of wall time. `h2v` captures one PNG every `(1000 / fps) × S` ms of wall time, so each frame lands at the correct moment of the original animation.
+5. PNGs go to `./captures/<job>/0001.png` … and ffmpeg stitches them into MP4s with `-c:v libx264 -pix_fmt yuv420p -crf 18`. The output plays back at the original speed.
+6. `./captures/` is wiped on exit — both on success and failure — unless `--no-ffmpeg` is set.
+
+**Trade-off:** total recording wall time = animation duration × slowdown. With the default S = 10, a 5-second animation takes 50 seconds to record. If your screenshots are fast (small viewport / low scale), you can lower `--slowdown` for faster recording.
 
 ---
 
@@ -121,6 +124,7 @@ A worked example with twelve frames lives in [`examples/swing-video/`](examples/
 | `--height <N>` | `720` | Viewport height in CSS pixels. |
 | `--scale <N>` | `3` | Device scale factor. With defaults this gives 3840×2160 (4K). |
 | `--crf <N>` | `18` | x264 CRF (0–51). Lower = bigger/better; 18 is visually lossless. |
+| `--slowdown <N>` | `10` | Real-time slowdown factor. The browser plays animations at `1/N` speed so screenshots can keep up; the resulting MP4 plays back at the original speed. Total recording wall time = animation duration × N. Use `1` to disable (only works if a screenshot fits in one frame interval — usually not at 4K). |
 | `--theme <m>` | `dark` | `dark`, `light`, or `both`. `both` produces two MP4s per animation; light has a `-light` filename suffix. |
 | `--out-dir <path>` | `./output` | Output directory. |
 | `--out <path>` | — | Exact output filename. Only valid when exactly one MP4 will be produced. |
@@ -141,7 +145,8 @@ Environment variables:
 
 - **No recursion.** Directory expansion only finds `*.html` at the top level of the named directory.
 - **Single-shot per page.** Each animation is recorded by playing through once from t=0. If your animation loops, the recording stops at the configured duration regardless.
-- **SMIL animations are not virtualized.** SVG `<animate>` and `<animateTransform>` elements aren't reachable through `document.getAnimations()`, so their timing isn't snapped to virtual time. CSS transitions and CSS keyframe animations on SVG (e.g. animating `stroke-dashoffset` via a `transition` rule) are fine.
+- **Recording is slow.** With the default `--slowdown 10`, recording takes 10× the animation's run time. A 30-second animation needs five minutes of wall time. Lower the slowdown if your screenshots are fast.
+- **Web Workers, WebSockets, and `fetch` are not slowed.** The shim only wraps `setTimeout` / `setInterval` / `performance.now` / `Date.now` / `requestAnimationFrame` on the main thread. Animations from any of those uncommon sources will desync with the rest. Not relevant for typical Claude-generated animations.
 
 ---
 
