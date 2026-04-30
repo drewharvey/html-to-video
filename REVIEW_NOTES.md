@@ -54,11 +54,28 @@ h2v export all-frames-bundle.html
 # Compare against your previously-produced 4K MP4s — should be identical.
 ```
 
-### CDP virtual time (added after frame-09 desync)
-The JS-only clock override has been replaced with Chromium's
-`Emulation.setVirtualTimePolicy` (CDP). This now virtualizes CSS
-`animation`/`transition` properties along with JS timers, fixing the
-frame-09 progress-bar-vs-counter desync.
+### CDP virtual time + beginFrame (frame-09 fix, second attempt)
+The first attempt at this fix used only `Emulation.setVirtualTimePolicy`,
+which turned out to virtualize the *timer* clock (Date, setTimeout, rAF)
+but not the compositor's clock — so CSS transitions still ticked on
+wall time, and frame-09 still desynced.
+
+The current approach pairs `setVirtualTimePolicy` with
+`HeadlessExperimental.beginFrame`. Each output frame:
+  1. advances the timer clock by 1000/fps ms (fires JS timers), then
+  2. calls beginFrame with a matching `frameTimeTicks`, which evaluates
+     CSS animations/transitions at that virtual moment and renders +
+     captures in one shot.
+
+Two consequences for your environment:
+- The recorder now launches `chrome-headless-shell` instead of the
+  full Chrome (`headless: 'shell'`). `npm install puppeteer` already
+  downloads chrome-headless-shell by default, so you shouldn't have to
+  do anything. If launch fails with "Could not find chrome-headless-shell",
+  run: `npx puppeteer browsers install chrome-headless-shell`.
+- Chromium is launched with `--enable-begin-frame-control` and
+  `--run-all-compositor-stages-before-draw`. These are mandatory for
+  the new approach.
 
 Things to watch for on your Mac:
 - `frame-09.mp4` should now show the ring fill and the % counter
@@ -66,8 +83,11 @@ Things to watch for on your Mac:
   HTML when opened directly.
 - Spot-check frames that use CSS transitions (frame-01 fade-in,
   frame-08 progress bar, frame-11 split layout) — they should look
-  identical to the originals or subtly better. None should regress.
-- If a frame hangs during capture, `Emulation.virtualTimeBudgetExpired`
-  may not be firing. Most likely cause: a runaway `setInterval` with
-  delay 0 that exceeds the `maxVirtualTimeTaskStarvationCount: 100`
-  cap. Bump that constant in `cli.js` if needed.
+  identical to the originals or subtly better.
+- The screenshots are now produced by `HeadlessExperimental.beginFrame`
+  (base64 PNG returned by CDP, written to disk by the script), not
+  `page.screenshot()`. Pixel-identical visually but a different code
+  path; if anything looks off in the output PNGs, that's the suspect.
+- If a frame hangs, `Emulation.virtualTimeBudgetExpired` isn't firing.
+  Likely cause: a runaway `setInterval` with delay 0 starving the
+  budget. Bump `maxVirtualTimeTaskStarvationCount` in `cli.js`.

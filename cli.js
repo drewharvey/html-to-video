@@ -432,14 +432,27 @@ function printPlan(jobs, opts) {
 }
 
 // =========================================================================
-// Virtual time via CDP (Emulation.setVirtualTimePolicy)
+// Virtual time + per-frame compositor control
 // =========================================================================
 //
-// Chromium's Emulation.setVirtualTimePolicy CDP method virtualizes the
-// browser's clock at the engine level: Date, performance.now, setTimeout,
-// setInterval, requestAnimationFrame, AND CSS animations/transitions all
-// advance together only when we tell them to. This eliminates the JS-vs-CSS
-// timing skew that pure JS clock overrides can't address.
+// Two CDP methods working together:
+//
+//   1. Emulation.setVirtualTimePolicy — virtualizes the *timer* clock.
+//      Date, performance.now, setTimeout, setInterval, and rAF only
+//      advance when we hand out a budget.
+//
+//   2. HeadlessExperimental.beginFrame — instructs the *compositor* to
+//      render a frame at a specific virtual timestamp. This is what makes
+//      CSS animations and transitions tick in lockstep with the timer
+//      clock. setVirtualTimePolicy alone doesn't reach the compositor;
+//      without beginFrame, CSS transitions stay on the wall clock.
+//
+// beginFrame additionally captures the screenshot in the same call, so
+// the pixels we save are guaranteed to reflect the render the compositor
+// just produced.
+//
+// Requires `headless: 'shell'` (old headless) and the
+// `--enable-begin-frame-control` launch flag.
 
 const VIRTUAL_TIME_OPTS = {
   // Pause again after running this many tasks in a row, even if budget
@@ -448,30 +461,6 @@ const VIRTUAL_TIME_OPTS = {
   maxVirtualTimeTaskStarvationCount: 100,
 };
 const NAV_BUDGET_MS = 30000;
-
-async function installVirtualTime(page) {
-  const client = await page.target().createCDPSession();
-  await client.send('Emulation.setVirtualTimePolicy', {
-    policy: 'pause',
-    initialVirtualTime: Date.now(),
-  });
-  return client;
-}
-
-async function navigateUnderVirtualTime(page, client, navigate) {
-  // Allow virtual time to flow during navigation/load, then re-pause.
-  // We kick off the navigation first so the policy and the navigation
-  // race together; pauseIfNetworkFetchesPending stops time as soon as
-  // the page is quiescent.
-  const navigation = navigate();
-  await client.send('Emulation.setVirtualTimePolicy', {
-    policy: 'pauseIfNetworkFetchesPending',
-    budget: NAV_BUDGET_MS,
-    ...VIRTUAL_TIME_OPTS,
-  });
-  await navigation;
-  await client.send('Emulation.setVirtualTimePolicy', { policy: 'pause' });
-}
 
 function advanceVirtualTime(client, ms) {
   return new Promise((resolve) => {
@@ -497,13 +486,30 @@ async function recordJob(browser, job, opts, capturesRoot) {
       deviceScaleFactor: opts.scale,
     });
 
-    const client = await installVirtualTime(page);
+    const client = await page.target().createCDPSession();
 
-    await navigateUnderVirtualTime(page, client, () =>
+    // Pause virtual time before navigation so all timers/animations the
+    // page schedules during load remain pending until we tick them.
+    const initialVirtualTime = Date.now();
+    await client.send('Emulation.setVirtualTimePolicy', {
+      policy: 'pause',
+      initialVirtualTime,
+    });
+
+    // Allow virtual time to flow during navigation; the navigation
+    // promise resolves on the load event and we re-pause immediately.
+    const navigation =
       job.mode === 'bundle'
         ? page.setContent(job.bundleHtml, { waitUntil: 'load' })
-        : page.goto('file://' + job.inputPath, { waitUntil: 'load' })
-    );
+        : page.goto('file://' + job.inputPath, { waitUntil: 'load' });
+
+    await client.send('Emulation.setVirtualTimePolicy', {
+      policy: 'pauseIfNetworkFetchesPending',
+      budget: NAV_BUDGET_MS,
+      ...VIRTUAL_TIME_OPTS,
+    });
+    await navigation;
+    await client.send('Emulation.setVirtualTimePolicy', { policy: 'pause' });
 
     if (job.theme === 'light') {
       await page.evaluate(() =>
@@ -516,13 +522,35 @@ async function recordJob(browser, job, opts, capturesRoot) {
     fs.mkdirSync(captureDir, { recursive: true });
 
     const tickMs = 1000 / opts.fps;
+    // Track the compositor's frame timestamp in absolute virtual ms,
+    // continuing from wherever virtual time landed after navigation.
+    let frameTimeTicks = await page.evaluate(() => Date.now());
+
     for (let i = 1; i <= job.totalFrames; i++) {
+      frameTimeTicks += tickMs;
+      // Advance the timer clock so any setTimeout/setInterval/rAF in the
+      // next 16.67 ms fires.
       await advanceVirtualTime(client, tickMs);
-      const fileName = String(i).padStart(4, '0') + '.png';
-      await page.screenshot({
-        path: path.join(captureDir, fileName),
-        type: 'png',
+      // Render and capture in one shot. frameTimeTicks tells the
+      // compositor to evaluate CSS animations/transitions at this exact
+      // virtual moment, so the captured pixels match the timer state.
+      const result = await client.send('HeadlessExperimental.beginFrame', {
+        frameTimeTicks,
+        interval: tickMs,
+        noDisplayUpdates: false,
+        screenshot: { format: 'png' },
       });
+      const fileName = String(i).padStart(4, '0') + '.png';
+      if (!result.screenshotData) {
+        throw new Error(
+          `HeadlessExperimental.beginFrame returned no screenshot for ${job.label} frame ${i}. ` +
+          `Make sure the browser was launched with --enable-begin-frame-control and headless: 'shell'.`
+        );
+      }
+      fs.writeFileSync(
+        path.join(captureDir, fileName),
+        Buffer.from(result.screenshotData, 'base64')
+      );
       if (i % opts.fps === 0 || i === job.totalFrames) {
         process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
       }
@@ -621,13 +649,17 @@ async function main() {
 
   try {
     const browser = await puppeteer.launch({
-      headless: true,
+      // 'shell' = chrome-headless-shell. Required for HeadlessExperimental.
+      // beginFrame, which is the only way to drive the compositor's frame
+      // time deterministically. New headless mode (`headless: true`) does
+      // not expose this domain.
+      headless: 'shell',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
+        // Required for HeadlessExperimental.beginFrame to work.
+        '--enable-begin-frame-control',
         // Force the compositor to finish all queued work before each draw.
-        // Necessary so screenshots taken right after virtual-time ticks
-        // reflect every animation frame the browser would have rendered.
         '--run-all-compositor-stages-before-draw',
       ],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,

@@ -53,11 +53,15 @@ In **directory mode** (no path args, or when a directory is passed) `h2v` skips 
 
 ## How it works
 
-1. Each animation is opened in headless Chrome at the chosen viewport.
-2. Before any page script runs, `h2v` pauses Chromium's clock using the `Emulation.setVirtualTimePolicy` CDP method. Once paused, **everything** in the page advances only when `h2v` ticks it forward: `Date`, `performance.now`, `setTimeout`, `setInterval`, `requestAnimationFrame`, and CSS `animation`/`transition` properties all share one virtualized clock.
-3. For each output frame, the clock budgets `1000 / fps` ms (16.67 ms at 60fps), the engine runs all timers/animations that fall in that window, then a PNG is captured. The browser is also launched with `--run-all-compositor-stages-before-draw` so each screenshot reflects every queued render before being taken.
+1. Each animation is opened in `chrome-headless-shell` at the chosen viewport.
+2. Before any page script runs, `h2v` pauses Chromium's timer clock using `Emulation.setVirtualTimePolicy` (CDP). `Date`, `performance.now`, `setTimeout`, `setInterval`, and `requestAnimationFrame` only advance when `h2v` hands out a budget.
+3. For each output frame:
+   - `h2v` advances the timer clock by `1000 / fps` ms so any pending JS timers fire.
+   - It then calls `HeadlessExperimental.beginFrame` with a matching `frameTimeTicks` value. This tells the compositor to evaluate CSS `animation`/`transition` properties at exactly that virtual moment and renders one frame. The same call captures the screenshot, so the saved PNG can't race ongoing rendering.
 4. PNGs go to `./captures/<job>/0001.png` … and ffmpeg stitches them into MP4s with `-c:v libx264 -pix_fmt yuv420p -crf 18`.
 5. `./captures/` is wiped on exit — both on success and failure — unless `--no-ffmpeg` is set.
+
+The browser is launched with `--enable-begin-frame-control` and `--run-all-compositor-stages-before-draw` so the compositor commits all queued work for each `beginFrame` before the screenshot is taken.
 
 ---
 
