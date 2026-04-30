@@ -42,3 +42,14 @@ What needs your verification on macOS:
 - The `installClockOverride` function fires correctly when bundle frames are loaded via `page.setContent()` — this is the one piece of bundle-mode behavior I couldn't verify without a working browser. If something breaks here, the fallback is to write each frame to a temp file and use `goto file://...`.
 - `captures/` directory cleanup runs on both success and failure paths
 - ffmpeg availability check fires before the browser launches
+
+### Installation check (one-time)
+- From the project root: `npm install -g .` (or `npm link`) should put `claudevid` on PATH. Verify with `which claudevid` and `claudevid --version`.
+
+### Suggested first real run
+```
+cd examples/swing-video
+claudevid export all-frames-bundle.html
+# Expect output/all-frames-bundle/frame-01.mp4 ... frame-12.mp4
+# Compare against your previously-produced 4K MP4s — should be identical.
+```
