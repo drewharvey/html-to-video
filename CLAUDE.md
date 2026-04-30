@@ -17,7 +17,7 @@ The animation-timing approach in `cli.js` is the result of many failed iteration
 3. **Don't switch to `chrome-headless-shell` (`headless: 'shell'`).** Same macOS BeginFrame block applies, plus it adds a separate binary download dependency for nothing.
 4. **Don't add Web Animations API micromanagement** (walking `document.getAnimations()`, `setCurrentTime`, `commitStyles`, `cancel`). All variants either don't reach the compositor's render or hang the screenshot pipeline as in (1).
 
-The one approach that works on every platform Puppeteer supports: **slow everything by factor `S`** (default `10`, configurable via `--slowdown`).
+The one approach that works on every platform Puppeteer supports: **slow everything by factor `S`** (default `6`, configurable via `--slowdown`). The default was 10 originally; it was lowered to 6 after the JPEG q=95 capture-format change brought screenshot p95 down to ~100 ms at 4K, leaving comfortable margin inside the per-tick budget.
 
 ## How animation timing actually works
 
@@ -31,7 +31,7 @@ The one approach that works on every platform Puppeteer supports: **slow everyth
 - **CSS layer** (CDP, after navigation): `Animation.setPlaybackRate({ playbackRate: 1 / S })`
 - **Capture loop**: sleep `(1000 / fps) × S` ms between screenshots; encode the resulting PNGs at `fps`. Playback is at the original speed.
 
-Wall time per recording = animation duration × S. With S=10, a 5-second animation takes ~50 seconds. Tunable via `--slowdown`.
+Wall time per recording = animation duration × S. With S=6, a 5-second animation takes ~30 seconds. Tunable via `--slowdown` (raise on slow machines if desync appears, lower if screenshots have headroom).
 
 This is the entirety of the recording strategy — the recordJob function in cli.js is short. If you need to change it, do so with full awareness of the rule above.
 
@@ -68,9 +68,9 @@ npx playwright install chromium
 - Top: CSS `transition: width 1s linear` (green)
 - Bottom: JS `setInterval` writing `width = X%` (blue)
 
-If they fill in lockstep, synchronization is working. Inspect by exporting to MP4 (or PNGs with `--no-ffmpeg`), then `Read` an output frame — Claude Code reads images.
+If they fill in lockstep, synchronization is working. Inspect by exporting to MP4 (or JPEGs with `--no-ffmpeg`), then `Read` an output frame — Claude Code reads images.
 
-Quick run (low-res, ~15 s wall time at the default 10× slowdown):
+Quick run (low-res, ~9 s wall time at the default 6× slowdown):
 ```
 node cli.js export tests/sync-test.html --width 640 --height 360 --scale 1
 ffmpeg -y -i output/sync-test.mp4 -ss 0.5 -frames:v 1 /tmp/mid.png
