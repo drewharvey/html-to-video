@@ -43,11 +43,45 @@ h2v export a.html b.html dir/    # explicit list, mixing files and dirs
 h2v export --theme both          # produce dark + light variants
 h2v export --duration 8s solo.html
 h2v export --dry-run             # print plan without recording
+
+h2v review ./anims               # build a one-page preview of every
+                                 # animation; opens in your browser, deletes
+                                 # the temp file when you Ctrl-C
+h2v review bundle.html           # works on bundle files too
+h2v review ./anims --out r.html  # save to a real path instead of a tmpfile
+h2v review ./anims --no-open     # write the file, print its path, exit
 ```
 
 Default settings match the original recording configuration that produced the reference videos: 60fps, 1280×720 viewport with deviceScaleFactor 3 (so screenshots come out 3840×2160 = 4K), x264 with `crf 18` and `yuv420p`. All overridable via flags.
 
 In **directory mode** (no path args, or when a directory is passed) `h2v` skips files starting with `.` and any file literally named `review.html`. Explicitly named file arguments bypass these filters — if you want to record `review.html`, just name it directly.
+
+---
+
+## Review (preview many animations at once)
+
+`h2v review` builds a single self-contained HTML page that embeds every animation at the given paths as `<iframe>`s, with a Reload-all button, per-card Replay, and a global light/dark toggle. Useful for inspecting a directory of animations before exporting them, or for sharing one file with someone who doesn't have `h2v` installed.
+
+```
+h2v review ./anims        # default: write to /tmp, open in browser, Ctrl-C to delete
+h2v review bundle.html    # also accepts bundle files
+```
+
+Default behavior:
+
+1. Write the page to a tmpfile (`os.tmpdir()/h2v-review-<timestamp>.html`).
+2. Open it in your default browser (`open` / `xdg-open` / `start` depending on platform).
+3. Print `Press Ctrl-C to close` and wait. On `SIGINT` / `SIGTERM`, delete the tmpfile and exit.
+
+Flags:
+
+| Flag | Effect |
+|---|---|
+| `--out <path>` | Write to this path instead of a tmpfile. Implies `--keep` (the file isn't yours to delete). |
+| `--no-open` | Don't auto-open the browser. Just print the path and exit. (No cleanup either — you presumably want the file.) |
+| `--keep` | Default tmpfile + open behavior, but don't delete on exit. |
+
+If the cleanup step fails (file in use, permissions, etc.), `h2v` prints a warning with the path and exits 0 — the review is what mattered, not the cleanup.
 
 ---
 

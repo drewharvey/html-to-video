@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
@@ -35,10 +36,12 @@ const ATTR_RE = /(\w+)="([^"]*)"/g;
 // Help & version
 // =========================================================================
 
-const HELP_TEXT = `h2v v${VERSION} — record HTML animations as 4K MP4s
+const HELP_TEXT = `h2v v${VERSION} — record and preview HTML animations
 
 USAGE
-  h2v export [<paths...>] [flags]
+  h2v export [<paths...>] [flags]   Record animations as 4K MP4s
+  h2v review [<paths...>] [flags]   Build a single HTML page that previews
+                                    every animation at the given paths
   h2v --help
   h2v --version
 
@@ -48,7 +51,7 @@ ARGUMENTS
             Files inside an explicitly named directory are filtered with
             the same rules: dotfiles and review.html are skipped.
 
-FLAGS
+EXPORT FLAGS
   --duration <Ns>     Single-file capture duration when no <meta> tag is
                       present (default: ${DEFAULTS.duration}s). Bundles
                       ignore this; they use each marker's capture_duration.
@@ -73,6 +76,16 @@ FLAGS
   --no-ffmpeg         Capture PNGs only; skip stitching and the captures
                       cleanup step.
   --dry-run           Print the recording plan and exit (no browser needed).
+
+REVIEW FLAGS
+  --out <path>        Write the review page to this path instead of a
+                      tmpfile (implies --keep).
+  --no-open           Don't auto-open the browser; just print the path.
+                      (No auto-cleanup either.)
+  --keep              Don't delete the temp file on exit. (Implied by
+                      --out and --no-open.)
+
+SHARED FLAGS
   -h, --help          Show this help.
   --version           Show version.
 
@@ -108,7 +121,7 @@ function parseArgs(argv) {
   }
 
   const [command, ...rest] = args;
-  if (command !== 'export') {
+  if (command !== 'export' && command !== 'review') {
     console.error(`error: unknown command: ${command}`);
     console.error(`Did you mean: h2v export ${args.join(' ')} ?`);
     process.exit(2);
@@ -116,6 +129,7 @@ function parseArgs(argv) {
 
   const positional = [];
   const opts = {
+    command,
     duration: DEFAULTS.duration,
     fps: DEFAULTS.fps,
     width: DEFAULTS.width,
@@ -128,6 +142,8 @@ function parseArgs(argv) {
     outOverride: null,
     skipFfmpeg: false,
     dryRun: false,
+    skipOpen: false,
+    keep: false,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -152,6 +168,8 @@ function parseArgs(argv) {
     else if (a === '--out') opts.outOverride = requireValue('--out');
     else if (a === '--no-ffmpeg') opts.skipFfmpeg = true;
     else if (a === '--dry-run') opts.dryRun = true;
+    else if (a === '--no-open') opts.skipOpen = true;
+    else if (a === '--keep') opts.keep = true;
     else if (a === '--help' || a === '-h') {
       printHelp();
       process.exit(0);
@@ -608,11 +626,310 @@ function ffmpegStitch(captureDir, outPath, opts) {
 }
 
 // =========================================================================
+// Review command
+// =========================================================================
+//
+// Build a single self-contained HTML page that embeds every animation
+// from the given paths as <iframe srcdoc>. Default: write to a tmpfile,
+// open it in the browser, wait for SIGINT, delete on exit.
+
+function safeJsonForScript(value) {
+  // JSON.stringify produces literal "</script>" inside any embedded
+  // animation HTML, which would terminate the outer <script> tag.
+  // Escape "</" → "<\/" — equivalent in a JS string, invisible to the
+  // HTML tokenizer.
+  return JSON.stringify(value, null, 2).replace(/<\/(?=[a-zA-Z!])/g, '<\\/');
+}
+
+function buildReviewHtml(animations) {
+  const count = animations.length;
+  const countLabel = `${count} animation${count === 1 ? '' : 's'}`;
+  return `<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>h2v review — ${countLabel}</title>
+<style>
+:root {
+  --bg: #0b0b0c; --card-bg: #161618; --border: #2a2a2d;
+  --text: #e6e6e8; --muted: #9a9aa1; --accent: #056ff0;
+  --btn-bg: #1f1f23; --btn-hover: #2a2a30;
+}
+[data-theme="light"] {
+  --bg: #f4f4f5; --card-bg: #ffffff; --border: #d8d8dc;
+  --text: #18181b; --muted: #6a6a72; --accent: #056ff0;
+  --btn-bg: #ececef; --btn-hover: #dedee2;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  min-height: 100vh; transition: background 0.2s ease, color 0.2s ease;
+}
+.page-header {
+  position: sticky; top: 0; z-index: 50;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  padding: 14px 28px; display: flex; align-items: center;
+  justify-content: space-between;
+}
+.page-header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+.page-header h1 small {
+  color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 13px;
+}
+.global-controls { display: flex; gap: 8px; }
+button.ctl {
+  padding: 8px 14px; background: var(--btn-bg); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); font-size: 13px; cursor: pointer;
+  font-family: monospace;
+}
+button.ctl:hover { background: var(--btn-hover); }
+main {
+  max-width: 1100px; margin: 0 auto; padding: 24px 20px 80px;
+  display: grid; gap: 24px;
+}
+.card {
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+}
+.card-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.card-head .name {
+  font-size: 14px; font-weight: 600; flex: 1; font-family: monospace;
+}
+.card-head .source {
+  font-family: monospace; font-size: 11px; color: var(--muted);
+}
+.card-head .replay {
+  padding: 6px 12px; font-size: 12px; background: var(--btn-bg);
+  border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+  cursor: pointer; font-family: monospace;
+}
+.card-head .replay:hover { background: var(--btn-hover); }
+.frame-iframe {
+  display: block; width: 100%; height: 480px; border: 0;
+  background: var(--bg);
+}
+</style>
+</head>
+<body>
+<header class="page-header">
+  <h1>h2v review <small>${countLabel}</small></h1>
+  <div class="global-controls">
+    <button class="ctl" id="reloadAll">↻ Reload all</button>
+    <button class="ctl" id="themeToggle">☀ Light</button>
+  </div>
+</header>
+<main id="cards"></main>
+<script>
+const ANIMATIONS = ${safeJsonForScript(animations)};
+
+let currentTheme = 'dark';
+
+function injectTheme(html, theme) {
+  const stripped = html.replace(/<html\\b([^>]*?)\\sdata-theme="[^"]*"([^>]*)>/i, '<html$1$2>');
+  return stripped.replace(/<html\\b([^>]*)>/i, '<html$1 data-theme="' + theme + '">');
+}
+function loadFrame(iframe, html) { iframe.srcdoc = injectTheme(html, currentTheme); }
+function broadcastTheme(theme) {
+  document.querySelectorAll('iframe').forEach((f) => {
+    try { f.contentWindow && f.contentWindow.postMessage({ theme: theme }, '*'); } catch (_) {}
+  });
+}
+function setThemeButtonLabel() {
+  document.getElementById('themeToggle').textContent =
+    currentTheme === 'dark' ? '☀ Light' : '🌙 Dark';
+}
+
+const main = document.getElementById('cards');
+ANIMATIONS.forEach((a) => {
+  const card = document.createElement('article');
+  card.className = 'card';
+  const head = document.createElement('div');
+  head.className = 'card-head';
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = a.title || a.id;
+  const source = document.createElement('span');
+  source.className = 'source';
+  source.textContent = a.source;
+  const replay = document.createElement('button');
+  replay.className = 'replay';
+  replay.textContent = '↺ Replay';
+  const iframe = document.createElement('iframe');
+  iframe.className = 'frame-iframe';
+  iframe.title = a.title || a.id;
+  iframe.setAttribute('loading', 'lazy');
+  replay.addEventListener('click', () => loadFrame(iframe, a.html));
+  loadFrame(iframe, a.html);
+  head.append(name, source, replay);
+  card.append(head, iframe);
+  main.appendChild(card);
+});
+
+document.getElementById('reloadAll').addEventListener('click', () => {
+  document.querySelectorAll('.card').forEach((card, i) => {
+    const iframe = card.querySelector('iframe');
+    loadFrame(iframe, ANIMATIONS[i].html);
+  });
+});
+document.getElementById('themeToggle').addEventListener('click', () => {
+  currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', currentTheme);
+  setThemeButtonLabel();
+  broadcastTheme(currentTheme);
+});
+setThemeButtonLabel();
+</script>
+</body>
+</html>
+`;
+}
+
+function openInBrowser(filePath) {
+  const cmd =
+    process.platform === 'darwin' ? 'open' :
+    process.platform === 'win32' ? 'cmd' :
+    'xdg-open';
+  const args =
+    process.platform === 'win32' ? ['/c', 'start', '""', filePath] :
+    [filePath];
+  return new Promise((resolve, reject) => {
+    let proc;
+    try {
+      proc = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    proc.on('error', reject);
+    // Don't wait for the spawned process; let it run independently.
+    proc.unref();
+    resolve();
+  });
+}
+
+function buildReviewAnimations(inputs) {
+  const animations = [];
+  for (const inputPath of inputs) {
+    const text = fs.readFileSync(inputPath, 'utf8');
+    const inputBase = path.basename(inputPath, path.extname(inputPath));
+    if (detectMode(text) === 'bundle') {
+      let frames;
+      try {
+        frames = parseBundleFrames(text, inputPath);
+      } catch (err) {
+        console.warn(`warning: skipping ${relativeToHere(inputPath)}: ${err.message}`);
+        continue;
+      }
+      for (const frame of frames) {
+        animations.push({
+          id: frame.id,
+          title: frame.title,
+          source: `${inputBase}/${frame.id}`,
+          html: frame.html,
+        });
+      }
+    } else {
+      animations.push({
+        id: inputBase,
+        title: null,
+        source: inputBase,
+        html: text,
+      });
+    }
+  }
+  return animations;
+}
+
+async function runReview(paths, opts) {
+  const cwd = process.cwd();
+  const inputs = discoverInputs(paths, cwd);
+
+  if (inputs.length === 0) {
+    console.error('error: no .html files matched. Pass paths or run from a directory containing animations.');
+    process.exit(1);
+  }
+
+  const animations = buildReviewAnimations(inputs);
+  if (animations.length === 0) {
+    console.error('error: no animations to review.');
+    process.exit(1);
+  }
+
+  const html = buildReviewHtml(animations);
+
+  const isTempFile = !opts.outOverride;
+  const outPath = isTempFile
+    ? path.join(os.tmpdir(), `h2v-review-${Date.now()}.html`)
+    : path.resolve(cwd, opts.outOverride);
+
+  try {
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, html);
+  } catch (err) {
+    console.error(`error: could not write review file: ${err.message}`);
+    process.exit(1);
+  }
+
+  console.log(
+    `Review page (${animations.length} animation${animations.length === 1 ? '' : 's'}): ${outPath}`
+  );
+
+  if (!opts.skipOpen) {
+    try {
+      await openInBrowser(outPath);
+    } catch (err) {
+      console.warn(`warning: could not auto-open browser: ${err.message}`);
+      console.warn(`open this file manually: ${outPath}`);
+    }
+  }
+
+  // Decide whether to wait + clean up. We only auto-clean tmpfiles, and
+  // only when the browser was actually opened (otherwise the user
+  // probably wants the path to do something with).
+  const willCleanup = isTempFile && !opts.keep && !opts.skipOpen;
+
+  if (willCleanup) {
+    console.log('Press Ctrl-C to close (and delete the temp file).');
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      try {
+        fs.unlinkSync(outPath);
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          console.warn(`\nwarning: could not delete ${outPath}: ${err.message}`);
+          console.warn('you may need to delete it manually.');
+        }
+      }
+    };
+
+    process.on('SIGINT', () => { cleanup(); process.exit(0); });
+    process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+    process.on('exit', cleanup);
+
+    // Keep the process alive until SIGINT/SIGTERM.
+    await new Promise(() => {});
+  }
+}
+
+// =========================================================================
 // Main
 // =========================================================================
 
 async function main() {
   const { paths, opts } = parseArgs(process.argv);
+
+  if (opts.command === 'review') {
+    return runReview(paths, opts);
+  }
+
   const cwd = process.cwd();
   const inputs = discoverInputs(paths, cwd);
 

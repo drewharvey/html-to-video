@@ -1,6 +1,10 @@
 # CLAUDE.md — h2v / html-to-video
 
-A CLI (`h2v`) that records HTML animations as 4K MP4s via Puppeteer + ffmpeg. Entry point: `cli.js`. Designed for the workflow of generating animations at claude.ai and exporting them locally.
+A CLI (`h2v`) with two subcommands:
+- `h2v export` — records HTML animations as 4K MP4s via Puppeteer + ffmpeg.
+- `h2v review` — builds a single self-contained HTML page that previews every animation in the given paths via `<iframe srcdoc>`. Default: writes to a tmpfile, opens in the browser, deletes on `SIGINT`. Flags: `--out <path>` (save to specific location, implies keep), `--no-open` (just print path), `--keep` (don't auto-delete).
+
+Entry point: `cli.js`. Designed for the workflow of generating animations at claude.ai and exporting/inspecting them locally.
 
 The bundle marker format uses `<!-- ===== ANIMATION_START id="..." capture_duration="Ns" ===== -->` / `ANIMATION_END`. The legacy `FRAME_START` / `FRAME_END` is still accepted for backward compatibility (regex in `cli.js` matches either).
 
@@ -102,6 +106,7 @@ demo/                           # smoke-test fixtures for the three usage modes
 
 - The bundle marker format (`<!-- ===== ANIMATION_START id="..." capture_duration="Ns" ===== -->`, with `FRAME_START` accepted as a legacy alias) — extra attributes like `filename` are tolerated and ignored.
 - The single-file metadata convention (`<meta name="h2v-duration" content="Ns">`).
+- The review page's `</script>` escape (replacing `</` → `<\/` in the embedded JSON `ANIMATIONS = ...`). Without it, any animation containing a `</script>` tag breaks the outer page.
 - Output paths: `output/<basename>.mp4` for single files, `output/<bundle>/<animation-id>.mp4` for bundles.
 - The `--theme dark|light|both` flag and `-light` filename suffix convention.
 - The skip rules in directory mode (dotfiles, `review.html`, anything inside `output/` / `node_modules/` / `frames/`). Explicitly named file args bypass them.
