@@ -1,4 +1,17 @@
 {
+  "name": "claudevid",
+  "version": "0.1.0",
+  "description": "Record HTML animations as 4K MP4s. Drop a file in a folder, run `claudevid export`, get a video.",
+  "bin": {
+    "claudevid": "./cli.js"
+  },
+  "main": "./cli.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "export": "node ./cli.js export"
+  },
   "dependencies": {
     "puppeteer": "^24.42.0"
   }
