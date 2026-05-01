@@ -139,6 +139,11 @@ PER-FILE METADATA
   [data-theme="<name>"] selectors. The first listed theme is the
   default (no attribute set, no filename suffix).
 
+  Add <meta name="h2v-viewport" content="WxH"> to declare the design
+  viewport (e.g., 1280x720, 1080x1080, 720x1280). Currently used by
+  h2v review to size each animation's iframe correctly across mixed
+  aspect ratios. Default: 1280x720.
+
 ENVIRONMENT
   PUPPETEER_EXECUTABLE_PATH  Browser executable path. Useful when
                              puppeteer's bundled Chrome isn't compatible

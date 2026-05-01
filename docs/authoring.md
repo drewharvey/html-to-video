@@ -63,6 +63,20 @@ h2v will record one video per theme when the operator passes `--theme all`, or j
 
 Theme names match `[a-zA-Z0-9_-]+`. Pages without this meta are single-theme — h2v records them once, no theme handling.
 
+### `<meta name="h2v-viewport">` — design viewport (optional)
+
+Declare the resolution your animation was designed for:
+
+```html
+<meta name="h2v-viewport" content="1280x720">
+```
+
+Format is `<width>x<height>` in CSS pixels — integers, no units, no spaces. Common values: `1280x720` (16:9 landscape, default), `1080x1080` (1:1 square), `720x1280` (9:16 portrait).
+
+Currently used by `h2v review` to size each animation's iframe correctly when previewing a mix of aspect ratios on one page. Without this meta, review assumes 1280×720, which letterboxes or crops non-16:9 content.
+
+`h2v export` does not currently honor this meta — it uses the global `--width` / `--height` flags. Declaring it now is forward-compatible for that future enhancement.
+
 ---
 
 ## Bundle format
@@ -101,6 +115,7 @@ h2v writes each animation to `output/<bundle-base>/<animation-id>.<ext>`.
 |---|---|
 | `title` | Human-readable label shown in console logs. Defaults to `id`. |
 | `themes` | Comma-separated theme list (e.g. `themes="dark,light"`). Same semantics as `<meta name="h2v-themes">` but per-animation. |
+| `viewport` | Design viewport in `WxH` format (e.g. `viewport="1080x1080"`). Same semantics as `<meta name="h2v-viewport">` but per-animation. Default: `1280x720`. |
 
 Other attributes are tolerated and ignored. The legacy form `FRAME_START` / `FRAME_END` also works for backward compatibility.
 

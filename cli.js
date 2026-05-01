@@ -103,6 +103,10 @@ const META_DURATION_RE =
   /<meta\s+name=["']h2v-duration["']\s+content=["']?(\d+(?:\.\d+)?)\s*s?["']?\s*\/?>/i;
 const META_THEMES_RE =
   /<meta\s+name=["']h2v-themes["']\s+content=["']([^"']*)["']\s*\/?>/i;
+const META_VIEWPORT_RE =
+  /<meta\s+name=["']h2v-viewport["']\s+content=["']?(\d+)x(\d+)["']?\s*\/?>/i;
+const VIEWPORT_ATTR_RE = /^(\d+)x(\d+)$/;
+const DEFAULT_VIEWPORT = { w: 1280, h: 720 };
 const THEME_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 const ATTR_RE = /(\w+)="([^"]*)"/g;
 
@@ -234,6 +238,11 @@ PER-FILE METADATA
   navigation for any non-default theme; your CSS reacts via
   [data-theme="<name>"] selectors. The first listed theme is the
   default (no attribute set, no filename suffix).
+
+  Add <meta name="h2v-viewport" content="WxH"> to declare the design
+  viewport (e.g., 1280x720, 1080x1080, 720x1280). Currently used by
+  h2v review to size each animation's iframe correctly across mixed
+  aspect ratios. Default: 1280x720.
 
 ENVIRONMENT
   PUPPETEER_EXECUTABLE_PATH  Browser executable path. Useful when
@@ -578,12 +587,21 @@ function parseBundleFrames(htmlText, sourcePath) {
     if (!durMatch) {
       throw new Error(`${sourcePath}: ANIMATION_START id="${attrs.id}" has invalid capture_duration "${attrs.capture_duration}"`);
     }
+    let viewport = null;
+    if (attrs.viewport) {
+      const vMatch = attrs.viewport.match(VIEWPORT_ATTR_RE);
+      if (!vMatch) {
+        throw new Error(`${sourcePath}: ANIMATION_START id="${attrs.id}" has invalid viewport "${attrs.viewport}" (expected WxH, e.g. 1280x720)`);
+      }
+      viewport = { w: parseInt(vMatch[1], 10), h: parseInt(vMatch[2], 10) };
+    }
     frames.push({
       id: attrs.id,
       title: attrs.title || attrs.id,
       durationSeconds: parseFloat(durMatch[1]),
       html: m[2],
       declaredThemes: parseThemeList(attrs.themes || ''),
+      viewport,
     });
   }
   if (frames.length === 0) {
@@ -603,6 +621,18 @@ function extractDeclaredThemes(htmlText) {
   const m = htmlText.match(META_THEMES_RE);
   if (!m) return [];
   return parseThemeList(m[1]);
+}
+
+// Parse <meta name="h2v-viewport" content="WxH"> from a single-file
+// animation. Returns {w, h} of positive integers, or null if absent
+// or malformed. Callers default to DEFAULT_VIEWPORT.
+function extractViewport(htmlText) {
+  const m = htmlText.match(META_VIEWPORT_RE);
+  if (!m) return null;
+  const w = parseInt(m[1], 10);
+  const h = parseInt(m[2], 10);
+  if (w > 0 && h > 0) return { w, h };
+  return null;
 }
 
 function parseThemeList(s) {
@@ -1079,28 +1109,31 @@ function buildReviewHtml(animations) {
   const count = animations.length;
   const countLabel = `${count} animation${count === 1 ? '' : 's'}`;
   return `<!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>h2v review — ${countLabel}</title>
 <style>
 :root {
-  --bg: #0b0b0c; --card-bg: #161618; --border: #2a2a2d;
-  --text: #e6e6e8; --muted: #9a9aa1; --accent: #056ff0;
-  --btn-bg: #1f1f23; --btn-hover: #2a2a30;
-}
-[data-theme="light"] {
+  color-scheme: light dark;
   --bg: #f4f4f5; --card-bg: #ffffff; --border: #d8d8dc;
-  --text: #18181b; --muted: #6a6a72; --accent: #056ff0;
+  --text: #18181b; --muted: #6a6a72;
   --btn-bg: #ececef; --btn-hover: #dedee2;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0b0c; --card-bg: #161618; --border: #2a2a2d;
+    --text: #e6e6e8; --muted: #9a9aa1;
+    --btn-bg: #1f1f23; --btn-hover: #2a2a30;
+  }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
   background: var(--bg); color: var(--text);
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  min-height: 100vh; transition: background 0.2s ease, color 0.2s ease;
+  min-height: 100vh;
 }
 .page-header {
   position: sticky; top: 0; z-index: 50;
@@ -1112,7 +1145,6 @@ body {
 .page-header h1 small {
   color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 13px;
 }
-.global-controls { display: flex; gap: 8px; }
 button.ctl {
   padding: 8px 14px; background: var(--btn-bg); border: 1px solid var(--border);
   border-radius: 8px; color: var(--text); font-size: 13px; cursor: pointer;
@@ -1128,7 +1160,7 @@ main {
   border-radius: 12px; overflow: hidden;
 }
 .card-head {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: baseline; gap: 12px;
   padding: 12px 16px; border-bottom: 1px solid var(--border);
 }
 .card-head .name {
@@ -1137,46 +1169,32 @@ main {
 .card-head .source {
   font-family: monospace; font-size: 11px; color: var(--muted);
 }
-.card-head .replay {
-  padding: 6px 12px; font-size: 12px; background: var(--btn-bg);
-  border: 1px solid var(--border); border-radius: 6px; color: var(--text);
-  cursor: pointer; font-family: monospace;
-}
-.card-head .replay:hover { background: var(--btn-hover); }
+/* Iframe size driven by per-animation viewport via inline style:
+   - width clamped to: container (100%), natural width, and "the width
+     that makes height ≤ 90vh for this aspect"
+   - aspect-ratio preserves the design proportions while scaling */
 .frame-iframe {
-  display: block; width: 100%; height: 480px; border: 0;
+  display: block;
+  width: min(
+    100%,
+    calc(var(--anim-w) * 1px),
+    calc(90vh * var(--anim-w) / var(--anim-h))
+  );
+  aspect-ratio: var(--anim-w) / var(--anim-h);
+  border: 0;
   background: var(--bg);
+  margin: 0 auto;
 }
 </style>
 </head>
 <body>
 <header class="page-header">
   <h1>h2v review <small>${countLabel}</small></h1>
-  <div class="global-controls">
-    <button class="ctl" id="reloadAll">↻ Reload all</button>
-    <button class="ctl" id="themeToggle">☀ Light</button>
-  </div>
+  <button class="ctl" id="resetAll">↻ Reset all</button>
 </header>
 <main id="cards"></main>
 <script>
 const ANIMATIONS = ${safeJsonForScript(animations)};
-
-let currentTheme = 'dark';
-
-function injectTheme(html, theme) {
-  const stripped = html.replace(/<html\\b([^>]*?)\\sdata-theme="[^"]*"([^>]*)>/i, '<html$1$2>');
-  return stripped.replace(/<html\\b([^>]*)>/i, '<html$1 data-theme="' + theme + '">');
-}
-function loadFrame(iframe, html) { iframe.srcdoc = injectTheme(html, currentTheme); }
-function broadcastTheme(theme) {
-  document.querySelectorAll('iframe').forEach((f) => {
-    try { f.contentWindow && f.contentWindow.postMessage({ theme: theme }, '*'); } catch (_) {}
-  });
-}
-function setThemeButtonLabel() {
-  document.getElementById('themeToggle').textContent =
-    currentTheme === 'dark' ? '☀ Light' : '🌙 Dark';
-}
 
 const main = document.getElementById('cards');
 ANIMATIONS.forEach((a) => {
@@ -1190,33 +1208,24 @@ ANIMATIONS.forEach((a) => {
   const source = document.createElement('span');
   source.className = 'source';
   source.textContent = a.source;
-  const replay = document.createElement('button');
-  replay.className = 'replay';
-  replay.textContent = '↺ Replay';
   const iframe = document.createElement('iframe');
   iframe.className = 'frame-iframe';
   iframe.title = a.title || a.id;
   iframe.setAttribute('loading', 'lazy');
-  replay.addEventListener('click', () => loadFrame(iframe, a.html));
-  loadFrame(iframe, a.html);
-  head.append(name, source, replay);
+  iframe.style.setProperty('--anim-w', a.viewport.w);
+  iframe.style.setProperty('--anim-h', a.viewport.h);
+  iframe.srcdoc = a.html;
+  head.append(name, source);
   card.append(head, iframe);
   main.appendChild(card);
 });
 
-document.getElementById('reloadAll').addEventListener('click', () => {
+document.getElementById('resetAll').addEventListener('click', () => {
   document.querySelectorAll('.card').forEach((card, i) => {
     const iframe = card.querySelector('iframe');
-    loadFrame(iframe, ANIMATIONS[i].html);
+    iframe.srcdoc = ANIMATIONS[i].html;
   });
 });
-document.getElementById('themeToggle').addEventListener('click', () => {
-  currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', currentTheme);
-  setThemeButtonLabel();
-  broadcastTheme(currentTheme);
-});
-setThemeButtonLabel();
 </script>
 </body>
 </html>
@@ -1265,6 +1274,7 @@ function buildReviewAnimations(inputs) {
           title: frame.title,
           source: `${inputBase}/${frame.id}`,
           html: frame.html,
+          viewport: frame.viewport || DEFAULT_VIEWPORT,
         });
       }
     } else {
@@ -1273,6 +1283,7 @@ function buildReviewAnimations(inputs) {
         title: null,
         source: inputBase,
         html: text,
+        viewport: extractViewport(text) || DEFAULT_VIEWPORT,
       });
     }
   }

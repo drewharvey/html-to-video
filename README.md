@@ -58,6 +58,7 @@ h2v reads a few conventions from your HTML to know how to record it:
 
 - `<meta name="h2v-duration" content="5s">` — recording length.
 - `<meta name="h2v-themes" content="dark,light">` — opt-in multi-theme recording.
+- `<meta name="h2v-viewport" content="1280x720">` — design viewport for non-default aspects (1:1, 9:16, etc.).
 - `data-h2v-hide` on any element — hide during recording.
 - `data-h2v-recording` on `<html>` (set by h2v while recording) — for CSS or JS that reacts to recording mode.
 - Bundle markers (`<!-- ===== ANIMATION_START id="..." capture_duration="5s" ===== -->` … `ANIMATION_END`) — multiple animations in one file.
