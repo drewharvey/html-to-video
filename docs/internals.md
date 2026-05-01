@@ -62,7 +62,7 @@ Total recording wall time = animation duration × S. With S = 6, a 5-second anim
 
 ### Caveat
 
-The shim doesn't slow Workers, WebSockets, or `fetch` — none of which are typical in claude-generated animations, but worth knowing if you author with them.
+The shim doesn't slow Workers, WebSockets, or `fetch` — none of which are typical in the short, self-contained animations h2v is built for, but worth knowing if you use them.
 
 ---
 

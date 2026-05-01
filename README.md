@@ -1,41 +1,27 @@
 # html-to-video
 
-Convert HTML animations to video files. Drop a file in a folder, run `h2v export`, get a video.
+Convert HTML animations to video files. Drop a file in a folder, run `h2v export`, get a video. Defaults to 4K 60fps MP4 (h264); every output parameter is configurable.
 
-Defaults to 4K 60fps MP4 (h264). Every output parameter is configurable — alternate codecs (h265, VP9, ProRes), containers (mp4/mov/webm), frame-capture format, resolution, fps, quality presets, and CRF.
+The companion `h2v review` command builds a single self-contained HTML page that embeds every animation at the given paths, for side-by-side preview in a browser.
 
-The package is `html-to-video`; the daily-typing command is `h2v` (with `html-to-video` available as a longer alias).
+## Install
 
-## Documentation
+Prerequisites:
 
-- **[docs/authoring.md](docs/authoring.md)** — HTML authoring contract: meta tags, themes, bundle markers, recording hooks. **Read this if you're building a Claude skill or any other tool that generates HTML for h2v.**
-- **[docs/cli.md](docs/cli.md)** — Full CLI reference: flags (auto-synced from `h2v --help`), quality presets, codec details, parallel recording, troubleshooting.
-- **[docs/internals.md](docs/internals.md)** — How recording actually works: the time-slowdown trick, JS shim, CSS playback rate, parallel job model. For contributors.
-- **[CLAUDE.md](CLAUDE.md)** — Repo design invariants and "things that aren't broken — don't change them." For people working on h2v itself.
-
-## Quickstart
+- **Node.js 18+**
+- **ffmpeg** on PATH (`brew install ffmpeg` on macOS, `apt install ffmpeg` on Debian/Ubuntu)
+- A working Chrome/Chromium for Puppeteer to launch. Bundled automatically on macOS and x86_64 Linux. On ARM64 Linux, set `PUPPETEER_EXECUTABLE_PATH` to a system-installed Chromium.
 
 ```
 git clone <this repo>
 cd <cloned directory>
 npm install
-npm install -g .                 # exposes `h2v` and `html-to-video` on PATH
-
-cd /path/to/your/animations
-h2v export                       # records every *.html in this dir
+npm install -g .
 ```
 
-Videos land in `./output/` (default `.mp4`; the extension follows `--container`).
+Exposes `h2v` and `html-to-video` on your PATH (same binary, two names; pick whichever you prefer to type).
 
-`npm install -g .` copies the current state of the repo into your global `node_modules`. Use `npm link` instead if you plan to edit `cli.js` and want changes picked up automatically.
-
-## Prerequisites
-
-- **Node.js 18+**
-- **ffmpeg** on PATH (`brew install ffmpeg` on macOS, `apt install ffmpeg` on Debian/Ubuntu)
-- A working Chrome/Chromium that Puppeteer can launch. On macOS and x86_64 Linux this is automatic via the bundled download. On ARM64 Linux, set `PUPPETEER_EXECUTABLE_PATH` to a system-installed Chromium.
-
-## Common usage
+## Usage
 
 ```
 h2v export                                # all *.html in cwd (non-recursive)
@@ -50,33 +36,89 @@ h2v review ./anims                        # browser preview of every animation
 h2v review bundle.html --out review.html  # save the preview to a real path
 ```
 
-Run `h2v --help` for the full flag list, or see [docs/cli.md](docs/cli.md) for the same content with deeper context (presets, codecs, parallel recording, etc.).
+Videos land in `./output/` by default; see [`docs/cli.md`](docs/cli.md) for the path scheme, directory-mode filters, and `--out` / `--out-dir` overrides.
 
-## Demo & tests
+A worked example: [`demo/`](demo/) contains a 12-animation storyboard exercising all three usage modes (single file, directory, bundle).
 
-- **[`demo/`](demo/)** — 12-animation Vaadin Swing Modernization Toolkit storyboard set up to exercise all three usage modes (single file / directory / bundle).
-- **[`tests/`](tests/)** — minimal correctness fixtures, currently a single `sync-test.html` for verifying that the recorder keeps CSS- and JS-driven animations in lockstep.
+## CLI options
 
-## Uninstall / cleanup
+`h2v --help` prints the full flag list. The main categories:
 
-To remove the global commands (whichever you installed with):
+- **Output quality** — codec, container, capture format and quality, CRF, quality presets
+- **Resolution and frame rate** — viewport, device scale factor, fps
+- **Selection** — theme, duration override
+- **Performance** — parallel concurrency, recording slowdown
+- **Output paths** — output directory, exact filename, dry-run, no-encode
+
+For values, defaults, validation, and edge cases: [`docs/cli.md`](docs/cli.md).
+
+## Authoring HTML for h2v
+
+h2v reads a few conventions from your HTML to know how to record it:
+
+- `<meta name="h2v-duration" content="5s">` — recording length.
+- `<meta name="h2v-themes" content="dark,light">` — opt-in multi-theme recording.
+- `data-h2v-hide` on any element — hide during recording.
+- `data-h2v-recording` on `<html>` (set by h2v while recording) — for CSS or JS that reacts to recording mode.
+- Bundle markers (`<!-- ===== ANIMATION_START id="..." capture_duration="5s" ===== -->` … `ANIMATION_END`) — multiple animations in one file.
+
+Full reference: [`docs/authoring.md`](docs/authoring.md).
+
+## How it works
+
+To capture frames reliably at high resolution, h2v slows the page's clocks during recording by a factor `S` (default 6, `--slowdown`), then stitches the captured frames back at the original fps. Recording wall time ≈ animation duration × `S`.
+
+Why this approach, and the failed alternatives behind it: [`docs/internals.md`](docs/internals.md).
+
+---
+
+## Development
+
+For modifying h2v itself.
+
+### Local install
+
+Use `npm link` instead of `npm install -g .` — it symlinks the global `h2v` command to your working tree, so edits to `cli.js` are picked up immediately:
 
 ```
-# If you used `npm install -g .`:
-npm uninstall -g html-to-video
-
-# If you used `npm link`:
-cd /path/to/this/repo && npm unlink
-# (from anywhere: `npm unlink -g html-to-video`)
+git clone <this repo>
+cd <cloned directory>
+npm install
+npm link
 ```
 
-To remove local artifacts:
+### Help-text sync
+
+`cli.js`'s `HELP_TEXT` is the canonical source for the flag list. After editing it, run `npm run docs:sync` to regenerate the auto-managed block in `docs/cli.md`. `npm run docs:check` is the read-only variant; the `docs-check` GitHub Actions workflow gates pushes to `main`.
+
+### Tests
+
+[`tests/sync-test.html`](tests/sync-test.html) is a 1.5-second fixture for verifying that CSS- and JS-driven animations stay in lockstep during recording. There is no `npm test` script — the project's testing is fixture-based.
+
+### Required reading
+
+[`CLAUDE.md`](CLAUDE.md) is required reading before changing `cli.js` — design invariants, the "things that aren't broken — don't change them" list, and the failed-approaches table for the recording mechanism. Several pitfalls have been hit and documented there; skipping it costs hours.
+
+### Uninstall
+
+Whichever install mode you used:
 
 ```
-rm -rf node_modules        # installed dependencies (~150 MB incl. Chromium download)
-rm -rf output captures     # recording outputs and intermediate frames
+npm uninstall -g html-to-video      # if you ran `npm install -g .`
+npm unlink -g html-to-video         # if you ran `npm link`
 ```
 
-All of `node_modules/`, `output/`, and `captures/` are gitignored.
+To remove local artifacts (all gitignored):
 
-> **Note:** if you used `npm link` and want to rename or move this directory, run `npm unlink` *before* the rename. The link is an absolute-path symlink, so renaming the directory leaves a broken symlink in your global npm bin. After the rename, run `npm link` again from the new path.
+```
+rm -rf node_modules output captures
+```
+
+If you used `npm link`, run `npm unlink` *before* renaming or moving the directory — the link is an absolute-path symlink and a rename leaves it broken.
+
+## Documentation
+
+- [`docs/authoring.md`](docs/authoring.md) — full HTML authoring contract.
+- [`docs/cli.md`](docs/cli.md) — full CLI reference (auto-synced from `h2v --help`).
+- [`docs/internals.md`](docs/internals.md) — recording-mechanism deep-dive.
+- [`CLAUDE.md`](CLAUDE.md) — repo design invariants and contributor guidance.

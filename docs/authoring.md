@@ -1,8 +1,8 @@
 # Authoring HTML for h2v
 
-This document is the contract between an HTML animation and the `h2v export` recorder. It describes every meta tag, attribute, and marker that h2v reads from your HTML, plus the conventions for theming and hiding UI controls during recording.
+The complete contract between an HTML animation and the `h2v export` recorder: every meta tag, attribute, and marker that h2v reads from your HTML, plus the conventions for theming and hiding UI controls during recording.
 
-If you're building a Claude skill (or any other tool) that generates HTML for h2v to render, this file is what you need. You should not need to read the rest of the project to author conformant HTML.
+The README has a summary suitable for the common case. This file is the full reference — useful when you need exact behavior, are working with the more advanced features (multi-theme recording, bundles, recording-time CSS/JS reactions), or are writing tooling that produces HTML for h2v.
 
 ---
 
@@ -67,7 +67,7 @@ Theme names match `[a-zA-Z0-9_-]+`. Pages without this meta are single-theme —
 
 ## Bundle format
 
-Multiple animations in one HTML file, each delimited by HTML comments:
+Multiple animations in one HTML file, each delimited by HTML comments. This format exists for workflows where moving many separate files around is awkward — for example, a chat interface that emits a single downloadable file, or a pipeline where one HTML payload is easier to ship than N. If you're already producing files locally, individual files in a directory is usually simpler; bundles aren't preferred when both options are available.
 
 ```html
 <!-- ===== ANIMATION_START id="intro" capture_duration="5s" ===== -->

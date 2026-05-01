@@ -1,6 +1,8 @@
 # h2v CLI reference
 
-Operator-side reference for `h2v export` and `h2v review`. The flag list below is generated from `h2v --help` and is the canonical surface; the deeper sections that follow explain the parts where prose is more useful than `--help`'s fixed-width formatting.
+Full reference for `h2v export` and `h2v review`. The flag list below is synced from `h2v --help` and is the canonical surface; the sections that follow explain the parts where prose is more useful than `--help`'s fixed-width formatting — quality presets, codec/container details, parallel recording, output paths, limitations.
+
+The README has a summary of common-case usage and the main flag groups. This file is the complete picture, equally useful whether a human is reading it or a tool is parsing it.
 
 For the HTML authoring contract (meta tags, themes, bundle markers, recording hooks), see [`authoring.md`](authoring.md). For how recording works under the hood, see [`internals.md`](internals.md).
 
