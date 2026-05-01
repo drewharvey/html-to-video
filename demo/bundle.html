@@ -1,4 +1,4 @@
-<!-- ===== ANIMATION_START id="01-established-app" title="The Established App" filename="01-established-app.html" capture_duration="5s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="01-established-app" title="The Established App" filename="01-established-app.html" capture_duration="5s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F01 — The Established App</title>
 <style>
 /* Shared theme variables for all frames */
@@ -15,6 +15,13 @@
   --accent: #056ff0; --accent-dim: #056ff012; --green: #16a34a; --green-dim: #16a34a12;
   --amber: #d97706; --amber-dim: #d9770612; --red: #dc2626; --red-dim: #dc262612;
   --shadow: 0 20px 60px rgba(0,0,0,0.08);
+}
+[data-theme="vibrant"] {
+  --bg: #1a0033; --surface: #2d0a52; --surface2: #3a1066; --surface3: #4a1a82;
+  --border: #5b2a99; --border2: #7d3dcc; --text: #fff8ff; --muted: #b896d4;
+  --accent: #ff2eb8; --accent-dim: #ff2eb822; --green: #00ffaa; --green-dim: #00ffaa22;
+  --amber: #ffd23f; --amber-dim: #ffd23f22; --red: #ff3860; --red-dim: #ff386022;
+  --shadow: 0 20px 60px rgba(155,30,200,0.4);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
@@ -66,7 +73,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
 </div>
 
 <script>
-function toggleTheme(){const l=document.documentElement.getAttribute('data-theme')==='light';document.documentElement.setAttribute('data-theme',l?'dark':'light');document.getElementById('themeBtn').textContent=l?'☀ Light':'🌙 Dark'}
+function toggleTheme(){const o=['dark','light','vibrant'];const c=document.documentElement.getAttribute('data-theme')||'dark';const n=o[(o.indexOf(c)+1)%o.length];document.documentElement.setAttribute('data-theme',n);const a=o[(o.indexOf(n)+1)%o.length];const l={dark:'🌙 Dark',light:'☀ Light',vibrant:'🎨 Vibrant'};document.getElementById('themeBtn').textContent=l[a]}
 function resetAnim(){location.reload()}
 function startAnim(){resetAnim()}
 window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
@@ -78,7 +85,7 @@ function uc(){document.getElementById('clock').textContent=new Date().toLocaleTi
 </script></body></html>
 <!-- ===== ANIMATION_END id="01-established-app" ===== -->
 
-<!-- ===== ANIMATION_START id="02-growing-friction" title="Growing Friction" filename="02-growing-friction.html" capture_duration="11s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="02-growing-friction" title="Growing Friction" filename="02-growing-friction.html" capture_duration="11s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F02 — Growing Friction</title>
 <style>
 /* Shared theme variables for all frames */
@@ -153,7 +160,7 @@ M.forEach((m,i)=>{setTimeout(()=>{const d=document.getElementById('d'+i);d.class
 </script></body></html>
 <!-- ===== ANIMATION_END id="02-growing-friction" ===== -->
 
-<!-- ===== ANIMATION_START id="03-rewrite-trap" title="The Rewrite Trap" filename="03-rewrite-trap.html" capture_duration="10s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="03-rewrite-trap" title="The Rewrite Trap" filename="03-rewrite-trap.html" capture_duration="10s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F03 — The Rewrite Trap</title>
 <style>
 /* Shared theme variables for all frames */
@@ -229,7 +236,7 @@ function p3(){fill.style.background='var(--red)';dot.style.background='var(--red
 </script></body></html>
 <!-- ===== ANIMATION_END id="03-rewrite-trap" ===== -->
 
-<!-- ===== ANIMATION_START id="04-toolkit-intro" title="Toolkit Introduction" filename="04-toolkit-intro.html" capture_duration="5s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="04-toolkit-intro" title="Toolkit Introduction" filename="04-toolkit-intro.html" capture_duration="5s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F04 — Toolkit Introduction</title>
 <style>
 /* Shared theme variables for all frames */
@@ -298,7 +305,7 @@ window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.
 </script></body></html>
 <!-- ===== ANIMATION_END id="04-toolkit-intro" ===== -->
 
-<!-- ===== ANIMATION_START id="05-browser-reveal" title="Browser Reveal" filename="05-browser-reveal.html" capture_duration="4s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="05-browser-reveal" title="Browser Reveal" filename="05-browser-reveal.html" capture_duration="4s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F05 — Browser Reveal</title>
 <style>
 /* Shared theme variables for all frames */
@@ -380,7 +387,7 @@ setTimeout(()=>{document.getElementById('browser').classList.add('visible')},500
 </script></body></html>
 <!-- ===== ANIMATION_END id="05-browser-reveal" ===== -->
 
-<!-- ===== ANIMATION_START id="06-simplification" title="Simplification" filename="06-simplification.html" capture_duration="7s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="06-simplification" title="Simplification" filename="06-simplification.html" capture_duration="7s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F06 — Simplification</title>
 <style>
 /* Shared theme variables for all frames */
@@ -448,7 +455,7 @@ setTimeout(()=>{ds.forEach(e=>{e.style.left='320px';e.style.top='160px'});setTim
 </script></body></html>
 <!-- ===== ANIMATION_END id="06-simplification" ===== -->
 
-<!-- ===== ANIMATION_START id="07-hybrid-state" title="Hybrid State" filename="07-hybrid-state.html" capture_duration="7s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="07-hybrid-state" title="Hybrid State" filename="07-hybrid-state.html" capture_duration="7s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F07 — Hybrid State</title>
 <style>
 /* Shared theme variables for all frames */
@@ -544,7 +551,7 @@ setTimeout(()=>{document.getElementById('swBadge').classList.remove('visible');s
 </script></body></html>
 <!-- ===== ANIMATION_END id="07-hybrid-state" ===== -->
 
-<!-- ===== ANIMATION_START id="08-timelapse" title="Time-lapse" filename="08-timelapse.html" capture_duration="10s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="08-timelapse" title="Time-lapse" filename="08-timelapse.html" capture_duration="10s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F08 — Time-lapse</title>
 <style>
 /* Shared theme variables for all frames */
@@ -615,7 +622,7 @@ order.forEach((ci,step)=>{setTimeout(()=>{cells[ci].classList.replace('legacy','
 </script></body></html>
 <!-- ===== ANIMATION_END id="08-timelapse" ===== -->
 
-<!-- ===== ANIMATION_START id="09-automation" title="Automation" filename="09-automation.html" capture_duration="7s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="09-automation" title="Automation" filename="09-automation.html" capture_duration="7s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F09 — Automation</title>
 <style>
 /* Shared theme variables for all frames */
@@ -688,7 +695,7 @@ setTimeout(()=>{document.getElementById('jb').classList.add('visible')},4200);
 </script></body></html>
 <!-- ===== ANIMATION_END id="09-automation" ===== -->
 
-<!-- ===== ANIMATION_START id="10-end-state" title="End State" filename="10-end-state.html" capture_duration="6s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="10-end-state" title="End State" filename="10-end-state.html" capture_duration="6s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F10 — End State</title>
 <style>
 /* Shared theme variables for all frames */
@@ -759,7 +766,7 @@ window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.
 </script></body></html>
 <!-- ===== ANIMATION_END id="10-end-state" ===== -->
 
-<!-- ===== ANIMATION_START id="11-before-after" title="Before / After" filename="11-before-after.html" capture_duration="6s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="11-before-after" title="Before / After" filename="11-before-after.html" capture_duration="6s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F11 — Before / After</title>
 <style>
 /* Shared theme variables for all frames */
@@ -850,7 +857,7 @@ window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.
 </script></body></html>
 <!-- ===== ANIMATION_END id="11-before-after" ===== -->
 
-<!-- ===== ANIMATION_START id="12-cta" title="Call to Action" filename="12-cta.html" capture_duration="5s" themes="dark,light" ===== -->
+<!-- ===== ANIMATION_START id="12-cta" title="Call to Action" filename="12-cta.html" capture_duration="5s" themes="dark,light,vibrant" viewport="1280x720" ===== -->
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>F12 — Call to Action</title>
 <style>
 /* Shared theme variables for all frames */

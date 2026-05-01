@@ -15,6 +15,13 @@
   --amber: #d97706; --amber-dim: #d9770612; --red: #dc2626; --red-dim: #dc262612;
   --shadow: 0 20px 60px rgba(0,0,0,0.08);
 }
+[data-theme="vibrant"] {
+  --bg: #1a0033; --surface: #2d0a52; --surface2: #3a1066; --surface3: #4a1a82;
+  --border: #5b2a99; --border2: #7d3dcc; --text: #fff8ff; --muted: #b896d4;
+  --accent: #ff2eb8; --accent-dim: #ff2eb822; --green: #00ffaa; --green-dim: #00ffaa22;
+  --amber: #ffd23f; --amber-dim: #ffd23f22; --red: #ff3860; --red-dim: #ff386022;
+  --shadow: 0 20px 60px rgba(155,30,200,0.4);
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
 .controls {
@@ -41,7 +48,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
   .ld{width:10px;height:10px;border-radius:3px}.ld.l{background:var(--surface3)}.ld.m{background:var(--accent)}
   .done{font-family:monospace;font-size:11px;color:var(--green);margin-top:16px;opacity:0;transition:opacity .4s}.done.visible{opacity:1}
 
-</style><meta name="h2v-duration" content="10s"><meta name="h2v-themes" content="dark,light"></head><body>
+</style><meta name="h2v-duration" content="10s"><meta name="h2v-themes" content="dark,light,vibrant"><meta name="h2v-viewport" content="1280x720"></head><body>
 <div class="controls" data-h2v-hide><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
 
 <div class="container">
@@ -54,7 +61,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
 </div>
 
 <script>
-function toggleTheme(){const l=document.documentElement.getAttribute('data-theme')==='light';document.documentElement.setAttribute('data-theme',l?'dark':'light');document.getElementById('themeBtn').textContent=l?'☀ Light':'🌙 Dark'}
+function toggleTheme(){const o=['dark','light','vibrant'];const c=document.documentElement.getAttribute('data-theme')||'dark';const n=o[(o.indexOf(c)+1)%o.length];document.documentElement.setAttribute('data-theme',n);const a=o[(o.indexOf(n)+1)%o.length];const l={dark:'🌙 Dark',light:'☀ Light',vibrant:'🎨 Vibrant'};document.getElementById('themeBtn').textContent=l[a]}
 function resetAnim(){location.reload()}
 function startAnim(){resetAnim()}
 window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
