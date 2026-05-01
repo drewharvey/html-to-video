@@ -90,8 +90,18 @@ The 12 animations exist in two forms (`bundle.html` markers and individual files
 
 ```
 cli.js                          # one file, only dep is puppeteer
-package.json                    # bin: { h2v, html-to-video } → cli.js
-README.md                       # user-facing docs
+package.json                    # bin: { h2v, html-to-video } → cli.js;
+                                # docs:sync / docs:check scripts
+README.md                       # slim human-facing landing page + doc map
+docs/                           # split docs (see "Documentation layout" below)
+  authoring.md                  # HTML-side contract: meta tags, themes,
+                                # bundle markers, recording hooks
+  cli.md                        # operator reference; contains the
+                                # auto-synced --help block
+  internals.md                  # recording mechanism, capture format,
+                                # parallel job model
+scripts/
+  sync-help-docs.js             # regenerates the --help block in docs/cli.md
 demo/                           # smoke-test fixtures for the three usage modes
   bundle.html                   # 12-animation bundle with ANIMATION_START markers
   animations/                   # the same 12 animations as standalone files
@@ -99,6 +109,33 @@ demo/                           # smoke-test fixtures for the three usage modes
   README.md
 .gitignore                      # node_modules, output, captures, review.html, .DS_Store
 ```
+
+## Documentation layout
+
+The README is the human-facing landing page (and the file most agents parse first when discovering the project). The deeper content is split by audience under `docs/`:
+
+- **`docs/authoring.md`** — the HTML-side contract. What meta tags h2v reads, theme model, bundle marker format, `data-h2v-hide` / `data-h2v-recording` hooks. **This is the file a Claude skill (or any other tool generating HTML for h2v) should read.** Self-contained — readable without the rest.
+- **`docs/cli.md`** — operator reference. Contains the auto-synced `h2v --help` block (between `<!-- BEGIN: auto-generated ... -->` markers) plus deeper sections on quality presets, codec/container details, parallel recording, output paths, etc.
+- **`docs/internals.md`** — how recording works under the hood. Time-slowdown trick, capture format choice, parallel job model. Cross-references this file for the failed-approaches table and design invariants.
+- **`CLAUDE.md`** (this file) — design invariants, failed approaches, "things that aren't broken." Required reading before modifying `cli.js`.
+
+## --help / docs/cli.md sync workflow
+
+**`HELP_TEXT` in `cli.js` is the single source of truth for the flag list.** `docs/cli.md` contains an auto-managed block (between `<!-- BEGIN: auto-generated from \`h2v --help\` ... -->` and `<!-- END: auto-generated -->` markers) that mirrors `h2v --help` verbatim.
+
+**After modifying `HELP_TEXT` in `cli.js`** (adding a flag, changing a default, rewording a description), run:
+
+```
+npm run docs:sync
+```
+
+This regenerates the auto-managed block. **Always run it before committing flag changes.**
+
+`npm run docs:check` is the CI-friendly variant — it exits 1 if the block is out of sync without modifying anything. Useful for a precommit hook or CI gate.
+
+The script is `scripts/sync-help-docs.js`. It spawns `node cli.js --help`, captures stdout, and replaces only the content between the markers. Anything outside the markers (including the prose in the rest of `docs/cli.md`) is untouched.
+
+**If a flag change also affects prose elsewhere in `docs/cli.md`** (e.g. a new flag warrants a deeper section, or you renamed something referenced in the "Quality presets" table), update those sections by hand alongside running `docs:sync`. The script only touches the auto-managed block.
 
 ## Things that aren't broken — don't change them
 
@@ -117,6 +154,7 @@ demo/                           # smoke-test fixtures for the three usage modes
 - `max` preset's `crf: 0` is intentionally set even though prores_ks ignores it. The reason: when a user combines `--quality-preset max --codec libx264`, the expected behavior is "max-tier encode with x264," which means lossless (CRF 0) yuv444p. Without the preset's `crf: 0`, the codec override would fall back to `DEFAULTS.crf` (18). Don't remove this.
 - The `-tune animation` and `-movflags +faststart` always-on additions: `-tune animation` is appended for libx264/libx265 in every tier *except* `draft` (because `-preset ultrafast` disables most of what tune does anyway). `-movflags +faststart` is appended for any `mp4`/`mov` output regardless of codec or tier. These are pure wins for h2v's content type; they're not exposed as flags because there's no scenario where a user wants to turn them off.
 - The `captureQualityExplicit` / `captureFormatExplicit` / `codecExplicit` / `crfExplicit` booleans on `opts` exist so `resolveExportOpts` can apply preset values only to fields the user didn't explicitly pass. They also let the "png + --capture-quality" mutex check fire only when `--capture-quality` was explicit (otherwise the standard preset's default of 95 would falsely trip the check whenever a user passed `--capture-format png`).
+- The BEGIN/END marker pair in `docs/cli.md` (`<!-- BEGIN: auto-generated from \`h2v --help\` — do not edit by hand -->` and `<!-- END: auto-generated -->`) — `scripts/sync-help-docs.js` looks for these exact strings to find the auto-managed block. If you rename or reformat them, update both the doc and the script's `BEGIN_MARKER` / `END_MARKER` constants.
 
 ## Operational notes
 

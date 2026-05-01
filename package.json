@@ -1,7 +1,7 @@
 {
   "name": "html-to-video",
   "version": "0.1.0",
-  "description": "Record HTML animations as 4K MP4s. Drop a file in a folder, run `h2v export`, get a video.",
+  "description": "Convert HTML animations to video files. Defaults to 4K 60fps MP4; codec, container, and quality presets all configurable.",
   "bin": {
     "h2v": "./cli.js",
     "html-to-video": "./cli.js"
@@ -11,7 +11,9 @@
     "node": ">=18"
   },
   "scripts": {
-    "export": "node ./cli.js export"
+    "export": "node ./cli.js export",
+    "docs:sync": "node ./scripts/sync-help-docs.js",
+    "docs:check": "node ./scripts/sync-help-docs.js --check"
   },
   "dependencies": {
     "puppeteer": "^24.42.0"
