@@ -1050,16 +1050,62 @@ function estimateWorkerMemoryMb(opts) {
   return Math.round(150 + 30 * mp);
 }
 
+// Available memory the OS could actually hand out without paging — i.e.
+// free + reclaimable cache. This is much larger than os.freemem() on
+// macOS and Linux, where the kernel aggressively uses RAM as cache.
+//
+// Probing path:
+//   1. Node 22+: os.availableMemory() — accurate, cross-platform.
+//   2. macOS:    parse `vm_stat` output (free + inactive + speculative
+//                + purgeable pages). Compressor pages are excluded;
+//                they're reclaimable too but more nuanced, so this is
+//                slightly conservative.
+//   3. Linux:    read /proc/meminfo's MemAvailable, the kernel's own
+//                "really available" estimate.
+//   4. Windows / unknown: fall back to os.freemem(), which on Windows
+//                already represents available physical memory.
 function getAvailableMemoryMb() {
-  // os.availableMemory() (Node 22+) excludes reclaimable filesystem cache,
-  // so it represents what the OS could actually hand out. Fall back to
-  // os.freemem() on older Node — that under-counts on macOS/Linux
-  // (treats cache as used), which makes the warning fire more often.
-  // Fine: erring conservative is the right direction here.
-  const bytes = typeof os.availableMemory === 'function'
-    ? os.availableMemory()
-    : os.freemem();
-  return Math.round(bytes / 1024 / 1024);
+  if (typeof os.availableMemory === 'function') {
+    return Math.round(os.availableMemory() / 1024 / 1024);
+  }
+  if (process.platform === 'darwin') {
+    const mb = getAvailableMemoryMacOS();
+    if (mb !== null) return mb;
+  }
+  if (process.platform === 'linux') {
+    const mb = getAvailableMemoryLinux();
+    if (mb !== null) return mb;
+  }
+  return Math.round(os.freemem() / 1024 / 1024);
+}
+
+function getAvailableMemoryMacOS() {
+  try {
+    const out = spawnSync('vm_stat', [], { encoding: 'utf8' });
+    if (out.status !== 0 || !out.stdout) return null;
+    const text = out.stdout;
+    const pageSizeMatch = text.match(/page size of (\d+) bytes/);
+    const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1], 10) : 4096;
+    const pagesOf = (label) => {
+      const m = text.match(new RegExp('Pages ' + label + ':\\s+(\\d+)\\.'));
+      return m ? parseInt(m[1], 10) : 0;
+    };
+    const reclaimable = pagesOf('free') + pagesOf('inactive') +
+      pagesOf('speculative') + pagesOf('purgeable');
+    if (reclaimable === 0) return null;
+    return Math.round(reclaimable * pageSize / 1024 / 1024);
+  } catch {
+    return null;
+  }
+}
+
+function getAvailableMemoryLinux() {
+  try {
+    const text = fs.readFileSync('/proc/meminfo', 'utf8');
+    const m = text.match(/^MemAvailable:\s+(\d+)\s+kB$/m);
+    if (m) return Math.round(parseInt(m[1], 10) / 1024);
+  } catch { /* ignore */ }
+  return null;
 }
 
 function checkMemoryBudget(opts, concurrency) {
