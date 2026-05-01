@@ -92,10 +92,11 @@ EXPORT FLAGS
   --concurrency <N>   How many animations to record in parallel (default
                       1). Each parallel slot launches its own browser, so
                       memory scales linearly. Useful for batches; for a
-                      single animation it has no effect. Recommended: 4
-                      on a 16 GB machine, 2 on 8 GB. h2v prints a (rough)
-                      warning if it estimates the run will exceed
-                      available memory; it doesn't block.
+                      single animation it has no effect. Suggested: 3 on
+                      8 GB, 8 on 16 GB, 12 on 32 GB+ (CPU cores cap
+                      effective parallelism past ~12 on most machines).
+                      h2v prints a (rough) warning if it estimates the
+                      run will exceed available memory; it doesn't block.
   --out-dir <path>    Output directory (default: ./${DEFAULTS.outDir}).
   --out <path>        Exact output filename. Only valid when exactly one
                       MP4 will be produced.

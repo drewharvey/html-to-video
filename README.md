@@ -240,7 +240,7 @@ Why one-browser-per-worker: pages inside one Chrome process serialize on the scr
 
 Trade-offs:
 
-- **Memory** scales linearly with `--concurrency`. Each browser is its own Chrome process; budget roughly 300-500 MB per worker at 4K. K=4 on a 16 GB machine is comfortable, K=2 on 8 GB. h2v prints a non-blocking warning if it estimates the run will exceed ~70 % of available memory:
+- **Memory** scales linearly with `--concurrency`. Each browser is its own Chrome process; budget roughly 300-500 MB per worker at 4K. See the [quick reference](#concurrency-vs-ram-quick-reference) below for suggested values per RAM tier. h2v prints a non-blocking warning if it estimates the run will exceed ~70 % of available memory:
 
   ```
   warning: this run may exceed available memory.
@@ -254,6 +254,34 @@ Trade-offs:
 - **Quality and sync are unaffected.** Each worker has its own browser, its own JS time-shim, and its own CDP `Animation.setPlaybackRate`. CPU contention can cause slightly less-uniform frame-time distribution, but JS-vs-CSS sync within each animation is preserved (both layers depend on the same wall-clock-derived shimmed time).
 
 Has no effect for a single animation — there's nothing to parallelize within one recording.
+
+### Concurrency vs RAM: quick reference
+
+For the default 4K settings (~400 MB per worker), here's a starting `--concurrency` sized for a machine running typical apps (browser with tabs, IDE, terminal, Slack, music, etc.):
+
+| Machine RAM | Suggested `--concurrency` | Peak h2v memory |
+|---|---|---|
+| 8 GB  | `3`     | ~1.2 GB |
+| 16 GB | `8`     | ~3.2 GB |
+| 32 GB | `12`    | ~4.8 GB |
+| 64 GB | `12+` * | ~5 GB+ |
+
+\* On 32 GB+ machines, **CPU cores cap effective parallelism** before RAM does — a recent MacBook has 8-12 performance cores, and pushing K much past that just thrashes the CPU. Memory is no longer the constraint.
+
+How the suggestions are picked: assume worst-case OS+apps load (Windows 11 with normal usage takes ~7-10 GB; macOS ~6-9 GB; Linux ~5-8 GB on a heavy desktop, less on lightweight WMs). What's left × 70 % is the budget; floor-divide by 400 MB to get K. On 8 GB, that's tight — close apps for K=4-5. On 16 GB, the budget supports ~K=10 but K=8 leaves comfortable headroom. On 32 GB+, the CPU is the limit.
+
+A safe approach either way: start at the suggested value and trust the memory warning to flag if you push past the budget. The warning is heuristic, so on a freshly-rebooted machine you can usually go a bit higher than the table.
+
+For a sense of the wall-time payoff, a batch of **ten 10-second animations** at default settings (~60 s sequential per animation):
+
+| `--concurrency` | Approximate wall time |
+|---|---|
+| 1 | ~11 min |
+| 2 | ~6 min  |
+| 4 | ~3 min  |
+| 8 | ~2 min  |
+
+Scaling isn't perfectly linear — CPU contention slows individual captures slightly as K grows (the parallel benchmark hit ~85 % of ideal at K=4).
 
 ---
 
@@ -316,7 +344,7 @@ A worked example with 12 animations lives in [`demo/`](demo/) — bundle and sta
 | `--crf <N>` | `18` | x264 CRF (0–51). Lower = bigger/better; 18 is visually lossless. |
 | `--slowdown <N>` | `6` | Real-time slowdown factor. The browser plays animations at `1/N` speed so screenshots can keep up; the resulting MP4 plays back at the original speed. Total recording wall time = animation duration × N. Raise on slow machines if you see desync. Use `1` to disable (only works if a screenshot fits in one frame interval — usually not at 4K). |
 | `--theme <spec>` | — | Themes to record. `<name>`, comma list, or `all`. Each requested theme must be declared via `<meta name="h2v-themes" content="...">` (see [Theming animations](#theming-animations)). With no flag, the default theme is used. |
-| `--concurrency <N>` | `1` | Record up to N animations in parallel, each in its own browser process. Memory scales linearly. Has no effect for a single animation; recommended `4` on 16 GB machines, `2` on 8 GB. See [Parallel batch recording](#parallel-batch-recording). |
+| `--concurrency <N>` | `1` | Record up to N animations in parallel, each in its own browser process. Memory scales linearly. Has no effect for a single animation; suggested `8` on 16 GB, `12` on 32 GB+, `3` on 8 GB. See [Parallel batch recording](#parallel-batch-recording). |
 | `--out-dir <path>` | `./output` | Output directory. |
 | `--out <path>` | — | Exact output filename. Only valid when exactly one MP4 will be produced. |
 | `--no-ffmpeg` | off | Capture PNGs only; skip stitching and the cleanup step. |
