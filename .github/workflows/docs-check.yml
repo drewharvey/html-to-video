@@ -1,0 +1,26 @@
+name: docs-check
+
+# Verifies that the auto-managed `h2v --help` block in docs/cli.md
+# matches the current HELP_TEXT in cli.js. If a PR or push to main
+# changes flags without running `npm run docs:sync`, this job fails
+# with the exact command needed to fix it.
+#
+# The check is dependency-free — `node cli.js --help` exits before
+# requiring puppeteer, and the sync script uses only Node stdlib —
+# so no `npm ci` step is needed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  docs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm run docs:check

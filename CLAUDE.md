@@ -131,7 +131,7 @@ npm run docs:sync
 
 This regenerates the auto-managed block. **Always run it before committing flag changes.**
 
-`npm run docs:check` is the CI-friendly variant — it exits 1 if the block is out of sync without modifying anything. Useful for a precommit hook or CI gate.
+`npm run docs:check` is the CI-friendly variant — it exits 1 if the block is out of sync without modifying anything. The `docs-check` GitHub Actions workflow (`.github/workflows/docs-check.yml`) runs it on every push to main and on PRs targeting main, so drift can't reach `main` even if `docs:sync` is forgotten locally. Useful as a local precommit hook too.
 
 The script is `scripts/sync-help-docs.js`. It spawns `node cli.js --help`, captures stdout, and replaces only the content between the markers. Anything outside the markers (including the prose in the rest of `docs/cli.md`) is untouched.
 
