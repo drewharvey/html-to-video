@@ -89,6 +89,13 @@ EXPORT FLAGS
                       declared, or no theme handling for unthemed pages).
                       Default theme has no filename suffix; non-default
                       themes are written as <name>-<theme>.mp4.
+  --concurrency <N>   How many animations to record in parallel (default
+                      1). Each parallel slot launches its own browser, so
+                      memory scales linearly. Useful for batches; for a
+                      single animation it has no effect. Recommended: 4
+                      on a 16 GB machine, 2 on 8 GB. h2v prints a (rough)
+                      warning if it estimates the run will exceed
+                      available memory; it doesn't block.
   --out-dir <path>    Output directory (default: ./${DEFAULTS.outDir}).
   --out <path>        Exact output filename. Only valid when exactly one
                       MP4 will be produced.
@@ -163,6 +170,7 @@ function parseArgs(argv) {
     crf: DEFAULTS.crf,
     slowdown: DEFAULTS.slowdown,
     themeSpec: null,
+    concurrency: 1,
     outDir: DEFAULTS.outDir,
     outOverride: null,
     skipFfmpeg: false,
@@ -189,6 +197,7 @@ function parseArgs(argv) {
     else if (a === '--crf') opts.crf = parseIntInRange(requireValue('--crf'), '--crf', 0, 51);
     else if (a === '--slowdown') opts.slowdown = parsePositiveInt(requireValue('--slowdown'), '--slowdown');
     else if (a === '--theme') opts.themeSpec = parseThemeFlag(requireValue('--theme'));
+    else if (a === '--concurrency') opts.concurrency = parsePositiveInt(requireValue('--concurrency'), '--concurrency');
     else if (a === '--out-dir') opts.outDir = requireValue('--out-dir');
     else if (a === '--out') opts.outOverride = requireValue('--out');
     else if (a === '--no-ffmpeg') opts.skipFfmpeg = true;
@@ -676,11 +685,11 @@ async function recordJob(browser, job, opts, capturesRoot) {
         type: 'jpeg',
         quality: CAPTURE_QUALITY,
       });
-      if (i % opts.fps === 0 || i === job.totalFrames) {
+      if (!opts.quietProgress && (i % opts.fps === 0 || i === job.totalFrames)) {
         process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
       }
     }
-    process.stdout.write('\n');
+    if (!opts.quietProgress) process.stdout.write('\n');
     return captureDir;
   } finally {
     try { await page.close(); } catch { /* ignore cleanup errors */ }
@@ -1026,6 +1035,122 @@ async function runReview(paths, opts) {
 }
 
 // =========================================================================
+// Memory budget heuristic
+// =========================================================================
+//
+// Rough rule of thumb: a headless Chrome's RSS at our settings is dominated
+// by browser baseline (~150 MB) plus the capture surface, which scales
+// roughly with megapixels (~30 MB/MP). At 4K (3840×2160 ≈ 8.3 MP) this
+// gives ~400 MB, matching what we observed in tests/bench-parallel.js.
+// The constants are deliberately approximate — false positives are
+// preferable to silent OOMs, and the warning is non-blocking either way.
+
+function estimateWorkerMemoryMb(opts) {
+  const mp = (opts.width * opts.scale) * (opts.height * opts.scale) / 1e6;
+  return Math.round(150 + 30 * mp);
+}
+
+function getAvailableMemoryMb() {
+  // os.availableMemory() (Node 22+) excludes reclaimable filesystem cache,
+  // so it represents what the OS could actually hand out. Fall back to
+  // os.freemem() on older Node — that under-counts on macOS/Linux
+  // (treats cache as used), which makes the warning fire more often.
+  // Fine: erring conservative is the right direction here.
+  const bytes = typeof os.availableMemory === 'function'
+    ? os.availableMemory()
+    : os.freemem();
+  return Math.round(bytes / 1024 / 1024);
+}
+
+function checkMemoryBudget(opts, concurrency) {
+  const perWorker = estimateWorkerMemoryMb(opts);
+  const total = perWorker * concurrency;
+  const available = getAvailableMemoryMb();
+  const budget = Math.round(available * 0.7);
+  if (total <= budget) return;
+  const safeK = Math.max(1, Math.floor(budget / perWorker));
+  const workerWord = concurrency === 1 ? 'worker' : 'workers';
+  const lines = [
+    `warning: this run may exceed available memory.`,
+    `         estimated ${total} MB needed (${perWorker} MB × ${concurrency} ${workerWord}), ~${available} MB available.`,
+    `         this is a rough heuristic — safe to ignore on machines with headroom.`,
+  ];
+  if (concurrency > 1 && safeK < concurrency) {
+    lines.push(`         to be safer, try --concurrency ${safeK}.`);
+  }
+  console.warn('\n' + lines.join('\n'));
+}
+
+// =========================================================================
+// Job execution: sequential and parallel paths
+// =========================================================================
+
+function launchBrowser(puppeteer) {
+  return puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+  });
+}
+
+async function runJobsSequential(jobs, opts, capturesRoot, puppeteer) {
+  const browser = await launchBrowser(puppeteer);
+  try {
+    for (const job of jobs) {
+      const startedAt = Date.now();
+      console.log(`\n${job.label} ${job.durationSeconds}s × ${opts.fps}fps = ${job.totalFrames} frames`);
+      const captureDir = await recordJob(browser, job, opts, capturesRoot);
+      if (!opts.skipFfmpeg) {
+        const outPath = outputPathFor(job, opts);
+        console.log(`    encoding → ${relativeToHere(outPath)}`);
+        await ffmpegStitch(captureDir, outPath, opts);
+      }
+      const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.log(`    done in ${elapsed}s`);
+    }
+  } finally {
+    try { await browser.close(); } catch { /* ignore */ }
+  }
+}
+
+// Worker-pool: K independent browsers each pull from a shared job queue.
+// Independent browser processes parallelize cleanly (verified in
+// tests/bench-parallel.js); pages inside one browser do not — Chrome's
+// screenshot pipeline serializes intra-process, so K=2 with mode A made
+// each capture 16× slower in the bench. Hence one-browser-per-worker.
+async function runJobsParallel(jobs, opts, capturesRoot, puppeteer, K) {
+  const queue = jobs.slice();
+  let completed = 0;
+  const total = jobs.length;
+  // Suppress per-frame `\r` progress; with K writers it would clobber.
+  const workerOpts = { ...opts, quietProgress: true };
+
+  const worker = async (idx) => {
+    const browser = await launchBrowser(puppeteer);
+    try {
+      while (true) {
+        const job = queue.shift();
+        if (!job) break;
+        const startedAt = Date.now();
+        console.log(`[w${idx}] start  ${job.label} ${job.durationSeconds}s × ${opts.fps}fps = ${job.totalFrames} frames`);
+        const captureDir = await recordJob(browser, job, workerOpts, capturesRoot);
+        if (!opts.skipFfmpeg) {
+          const outPath = outputPathFor(job, opts);
+          await ffmpegStitch(captureDir, outPath, opts);
+        }
+        completed++;
+        const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+        console.log(`[w${idx}] done   ${job.label} in ${elapsed}s  [${completed}/${total}]`);
+      }
+    } finally {
+      try { await browser.close(); } catch { /* ignore */ }
+    }
+  };
+
+  await Promise.all(Array.from({ length: K }, (_, i) => worker(i)));
+}
+
+// =========================================================================
 // Main
 // =========================================================================
 
@@ -1055,6 +1180,11 @@ async function main() {
 
   printPlan(jobs, opts);
 
+  // Memory-budget warning fires in dry-run too — users may want to preview
+  // whether a planned --concurrency setting will fit before committing.
+  const concurrency = Math.min(opts.concurrency, jobs.length);
+  checkMemoryBudget(opts, concurrency);
+
   if (opts.dryRun) return;
 
   if (!opts.skipFfmpeg) ensureFfmpeg();
@@ -1074,33 +1204,15 @@ async function main() {
   console.log(
     `\nRecording at ${opts.width * opts.scale}×${opts.height * opts.scale} ` +
     `(${opts.width}×${opts.height} × ${opts.scale}), ${opts.fps}fps, crf ${opts.crf}, ` +
-    `slowdown ${opts.slowdown}× (wall time = animation × ${opts.slowdown}).`
+    `slowdown ${opts.slowdown}× (wall time = animation × ${opts.slowdown})` +
+    (concurrency > 1 ? `, concurrency ${concurrency}` : '') + '.'
   );
 
   try {
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    });
-
-    try {
-      for (const job of jobs) {
-        const startedAt = Date.now();
-        console.log(`\n${job.label} ${job.durationSeconds}s × ${opts.fps}fps = ${job.totalFrames} frames`);
-        const captureDir = await recordJob(browser, job, opts, capturesRoot);
-        if (!opts.skipFfmpeg) {
-          const outPath = outputPathFor(job, opts);
-          console.log(`    encoding → ${relativeToHere(outPath)}`);
-          await ffmpegStitch(captureDir, outPath, opts);
-        }
-        const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-        console.log(`    done in ${elapsed}s`);
-      }
-    } finally {
-      // Same rationale as recordJob's page.close: cleanup errors must not
-      // mask success/failure of the actual recording.
-      try { await browser.close(); } catch { /* ignore */ }
+    if (concurrency === 1) {
+      await runJobsSequential(jobs, opts, capturesRoot, puppeteer);
+    } else {
+      await runJobsParallel(jobs, opts, capturesRoot, puppeteer, concurrency);
     }
 
     console.log('\nAll animations recorded.');

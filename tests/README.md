@@ -44,3 +44,18 @@ The fixture loads `sync-test.html`. 30 captures per config; reports mean / p50 /
 Captures the same settled frame as PNG, JPEG q=95, and JPEG q=85 to `/tmp/quality.*`. Use for a side-by-side or for PSNR with `ffmpeg -lavfi psnr`. Defaults to the sync-test fixture; pass another HTML path as `argv[2]` to test richer content (e.g. `node tests/bench-quality.js demo/animations/01-established-app.html`).
 
 JPEG q=95 measured at PSNR ≈ 58 dB across the sync-test fixture and the demo animations — well above the 40 dB "visually lossless" threshold and far smaller than what the downstream x264 CRF 18 step contributes.
+
+## bench-parallel.js
+
+Tests whether screenshots parallelize. Runs K back-to-back screenshot loops at 4K under two modes:
+
+- **Mode A** — K pages in one browser process
+- **Mode B** — K browsers, one page each
+
+```
+node tests/bench-parallel.js          # both modes
+node tests/bench-parallel.js A        # only mode A
+node tests/bench-parallel.js B        # only mode B
+```
+
+Result on this codebase (sandbox ARM Linux Chromium, K ∈ {1, 2, 4}): Mode A is catastrophic — K=2 made each capture ~16× slower (per-shot 78 ms → 1399 ms). Mode B is near-linear: K=4 hits 3.42× of ideal (≈85% efficiency). That's why the `--concurrency` implementation in `cli.js` uses one browser per worker, never multiple pages in one browser. If you change that, re-run this benchmark first.

@@ -109,6 +109,7 @@ demo/                           # smoke-test fixtures for the three usage modes
 - The theme model: pages opt in via `<meta name="h2v-themes" content="...">` (single-file) or `themes="..."` on bundle markers. First declared theme = default = no `data-theme` attribute set, no filename suffix; non-default themes get `data-theme="<name>"` on `<html>` after navigation and a `-<name>` filename suffix. The CLI's `--theme <spec>` accepts a single name, a comma list, or `all`. Pages with no theme meta are single-theme. Theme names match `[a-zA-Z0-9_-]+`.
 - The skip rules in directory mode: dotfiles and `review.html`. Directory listing is non-recursive, so subdirectories like `output/` or `node_modules/` aren't entered automatically. Explicitly named file args bypass these filters.
 - The `data-h2v-recording` attribute on `<html>` and the injected `[data-h2v-hide]{display:none!important}` stylesheet, both applied after navigation in `recordJob`. Pages and the upcoming animation-creation skill rely on these names — renaming them is a breaking change. Only set during `export`, not during `review` (review is for human inspection, controls should stay visible).
+- The parallel-job model: **one browser per worker**, never multiple pages in the same browser. `tests/bench-parallel.js` measured K=2 in mode A (two pages, one browser) at 0.13× of ideal — Chrome's screenshot pipeline serializes intra-process. Mode B (separate browsers) hits 3.42× of ideal at K=4. Don't "optimize" by sharing a browser across workers.
 
 ## Operational notes
 

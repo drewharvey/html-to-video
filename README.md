@@ -217,6 +217,46 @@ Each animation in a bundle has its own theme list — they don't have to match.
 
 ---
 
+## Parallel batch recording
+
+For multi-animation runs (a directory, a bundle, or `--theme all` against many files), `--concurrency <N>` records up to N animations at the same time, each in its own browser process:
+
+```
+h2v export demo/animations/ --concurrency 4
+h2v export demo/bundle.html --theme all --concurrency 4
+```
+
+```
+[w0] start  [01-established-app] 5s × 60fps = 300 frames
+[w1] start  [02-growing-friction] 11s × 60fps = 660 frames
+[w2] start  [03-rewrite-trap] 10s × 60fps = 600 frames
+[w3] start  [04-toolkit-intro] 5s × 60fps = 300 frames
+[w0] done   [01-established-app] in 32.1s  [1/12]
+[w0] start  [05-browser-reveal] 4s × 60fps = 240 frames
+...
+```
+
+Why one-browser-per-worker: pages inside one Chrome process serialize on the screenshot pipeline (a single tab takes ~80 ms; two tabs concurrent in the same browser made each capture take ~1400 ms in our benchmark). Separate browser processes don't share that pipeline and parallelize cleanly — `tests/bench-parallel.js` measured ~85 % of ideal linear scaling at K=4.
+
+Trade-offs:
+
+- **Memory** scales linearly with `--concurrency`. Each browser is its own Chrome process; budget roughly 300-500 MB per worker at 4K. K=4 on a 16 GB machine is comfortable, K=2 on 8 GB. h2v prints a non-blocking warning if it estimates the run will exceed ~70 % of available memory:
+
+  ```
+  warning: this run may exceed available memory.
+           estimated 13740 MB needed (1145 MB × 12 workers), ~15265 MB available.
+           this is a rough heuristic — safe to ignore on machines with headroom.
+           to be safer, try --concurrency 9.
+  ```
+
+  The estimate is `~150 MB + ~30 MB × megapixels` per worker. It's deliberately rough; false positives are preferable to silent OOMs. Either way, the run proceeds — you decide.
+- **Output ordering**: per-job log lines from different workers interleave. The per-frame `\r` progress reporter is suppressed in parallel mode (with K writers it would clobber). Each `start` / `done` line is tagged with `[w<N>]` and the `done` line carries `[<completed>/<total>]`.
+- **Quality and sync are unaffected.** Each worker has its own browser, its own JS time-shim, and its own CDP `Animation.setPlaybackRate`. CPU contention can cause slightly less-uniform frame-time distribution, but JS-vs-CSS sync within each animation is preserved (both layers depend on the same wall-clock-derived shimmed time).
+
+Has no effect for a single animation — there's nothing to parallelize within one recording.
+
+---
+
 ## Setting per-file duration
 
 For a **single-file animation**, h2v needs to know how long to record. In priority order:
@@ -276,6 +316,7 @@ A worked example with 12 animations lives in [`demo/`](demo/) — bundle and sta
 | `--crf <N>` | `18` | x264 CRF (0–51). Lower = bigger/better; 18 is visually lossless. |
 | `--slowdown <N>` | `6` | Real-time slowdown factor. The browser plays animations at `1/N` speed so screenshots can keep up; the resulting MP4 plays back at the original speed. Total recording wall time = animation duration × N. Raise on slow machines if you see desync. Use `1` to disable (only works if a screenshot fits in one frame interval — usually not at 4K). |
 | `--theme <spec>` | — | Themes to record. `<name>`, comma list, or `all`. Each requested theme must be declared via `<meta name="h2v-themes" content="...">` (see [Theming animations](#theming-animations)). With no flag, the default theme is used. |
+| `--concurrency <N>` | `1` | Record up to N animations in parallel, each in its own browser process. Memory scales linearly. Has no effect for a single animation; recommended `4` on 16 GB machines, `2` on 8 GB. See [Parallel batch recording](#parallel-batch-recording). |
 | `--out-dir <path>` | `./output` | Output directory. |
 | `--out <path>` | — | Exact output filename. Only valid when exactly one MP4 will be produced. |
 | `--no-ffmpeg` | off | Capture PNGs only; skip stitching and the cleanup step. |
