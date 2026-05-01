@@ -138,8 +138,14 @@ EXPORT FLAGS
                       per-file metadata wins, then bundle marker, then the
                       default (${DEFAULTS.duration}s).
   --fps <N>           Frames per second (default: ${DEFAULTS.fps}).
-  --width <N>         Viewport width in CSS pixels (default: ${DEFAULTS.width}).
-  --height <N>        Viewport height in CSS pixels (default: ${DEFAULTS.height}).
+  --width <N>         Viewport width in CSS pixels. When omitted, per-file
+                      <meta name="h2v-viewport"> or bundle marker viewport
+                      attribute wins; default ${DEFAULTS.width}. Passing this flag
+                      overrides every per-animation viewport for the run.
+  --height <N>        Viewport height in CSS pixels. Same precedence as
+                      --width; default ${DEFAULTS.height}. --width and --height are a
+                      coupled pair — passing either makes both override
+                      per-animation metas.
   --scale <N>         Device scale factor (default: ${DEFAULTS.scale};
                       1280×720 × 3 = 4K).
   --quality-preset <name>
@@ -240,9 +246,10 @@ PER-FILE METADATA
   default (no attribute set, no filename suffix).
 
   Add <meta name="h2v-viewport" content="WxH"> to declare the design
-  viewport (e.g., 1280x720, 1080x1080, 720x1280). Currently used by
-  h2v review to size each animation's iframe correctly across mixed
-  aspect ratios. Default: 1280x720.
+  viewport (e.g., 1280x720, 1080x1080, 720x1280). Used by both h2v
+  export (per-animation recording size) and h2v review (per-iframe
+  sizing on the preview page). The CLI's --width / --height flags
+  override it for ad-hoc runs. Default: 1280x720.
 
 ENVIRONMENT
   PUPPETEER_EXECUTABLE_PATH  Browser executable path. Useful when
@@ -299,6 +306,8 @@ function parseArgs(argv) {
     codec: DEFAULTS.codec,
     codecExplicit: false,
     crfExplicit: false,
+    widthExplicit: false,
+    heightExplicit: false,
     container: null,
     qualityPreset: 'standard',
     skipFfmpeg: false,
@@ -322,8 +331,14 @@ function parseArgs(argv) {
       opts.durationExplicit = true;
     }
     else if (a === '--fps') opts.fps = parsePositiveInt(requireValue('--fps'), '--fps');
-    else if (a === '--width') opts.width = parsePositiveInt(requireValue('--width'), '--width');
-    else if (a === '--height') opts.height = parsePositiveInt(requireValue('--height'), '--height');
+    else if (a === '--width') {
+      opts.width = parsePositiveInt(requireValue('--width'), '--width');
+      opts.widthExplicit = true;
+    }
+    else if (a === '--height') {
+      opts.height = parsePositiveInt(requireValue('--height'), '--height');
+      opts.heightExplicit = true;
+    }
     else if (a === '--scale') opts.scale = parsePositiveInt(requireValue('--scale'), '--scale');
     else if (a === '--crf') {
       opts.crf = parseIntInRange(requireValue('--crf'), '--crf', 0, 51);
@@ -679,6 +694,11 @@ function deriveThemes(declaredThemes, themeSpec, label) {
 
 function buildPlan(inputs, opts) {
   const jobs = [];
+  // If either --width or --height was passed explicitly, the CLI flag pair
+  // overrides any per-animation viewport meta/marker for the whole run.
+  // Mixing CLI width with meta height (or vice versa) would be confusing,
+  // so we treat them as a coupled override.
+  const flagViewportOverrides = opts.widthExplicit || opts.heightExplicit;
   for (const inputPath of inputs) {
     const text = fs.readFileSync(inputPath, 'utf8');
     const mode = detectMode(text);
@@ -694,6 +714,9 @@ function buildPlan(inputs, opts) {
         );
         const durationSeconds = opts.durationExplicit ? opts.duration : frame.durationSeconds;
         const durationSource = opts.durationExplicit ? 'flag' : 'marker';
+        const viewport = flagViewportOverrides
+          ? { w: opts.width, h: opts.height }
+          : (frame.viewport || DEFAULT_VIEWPORT);
         for (const theme of themes) {
           jobs.push(makeJob({
             inputPath, inputBase,
@@ -703,6 +726,8 @@ function buildPlan(inputs, opts) {
             bundleHtml: frame.html,
             durationSeconds,
             durationSource,
+            width: viewport.w,
+            height: viewport.h,
             theme,
           }, opts));
         }
@@ -710,12 +735,16 @@ function buildPlan(inputs, opts) {
     } else {
       const meta = extractMetaDuration(text);
       const declaredThemes = extractDeclaredThemes(text);
+      const viewportMeta = extractViewport(text);
       const durationSeconds = opts.durationExplicit
         ? opts.duration
         : (meta != null ? meta : opts.duration);
       const durationSource = opts.durationExplicit
         ? 'flag'
         : (meta != null ? 'meta' : 'default');
+      const viewport = flagViewportOverrides
+        ? { w: opts.width, h: opts.height }
+        : (viewportMeta || DEFAULT_VIEWPORT);
       const themes = deriveThemes(
         declaredThemes,
         opts.themeSpec,
@@ -730,6 +759,8 @@ function buildPlan(inputs, opts) {
           bundleHtml: null,
           durationSeconds,
           durationSource,
+          width: viewport.w,
+          height: viewport.h,
           theme,
         }, opts));
       }
@@ -807,6 +838,10 @@ function printPlan(jobs, opts) {
   }
   const totalFrames = jobs.reduce((s, j) => s + j.totalFrames, 0);
   const totalSeconds = jobs.reduce((s, j) => s + j.durationSeconds, 0);
+  // Annotate per-job rows with [WxH] only when jobs have varied resolutions;
+  // otherwise the global summary line carries that info.
+  const sizes = new Set(jobs.map((j) => `${j.width}x${j.height}`));
+  const variedSizes = sizes.size > 1;
   console.log(
     `Plan: ${jobs.length} animation${jobs.length === 1 ? '' : 's'}, ` +
     `${totalFrames} frames at ${opts.fps}fps (~${totalSeconds.toFixed(1)}s of footage)`
@@ -818,9 +853,10 @@ function printPlan(jobs, opts) {
       job.durationSource === 'flag' ? ' (--duration override)' :
       job.durationSource === 'meta' ? ' (from meta tag)' :
       '';
+    const sizeAnnotation = variedSizes ? ` [${job.width}×${job.height}]` : '';
     console.log(
       `  ${job.label.padEnd(34)} ${dur.padStart(6)} × ${opts.fps}fps = ` +
-      `${String(job.totalFrames).padStart(5)} frames → ${out}${src}`
+      `${String(job.totalFrames).padStart(5)} frames${sizeAnnotation} → ${out}${src}`
     );
   }
 }
@@ -893,8 +929,8 @@ async function recordJob(browser, job, opts, capturesRoot) {
   const page = await browser.newPage();
   try {
     await page.setViewport({
-      width: opts.width,
-      height: opts.height,
+      width: job.width,
+      height: job.height,
       deviceScaleFactor: opts.scale,
     });
 
@@ -1380,9 +1416,16 @@ async function runReview(paths, opts) {
 // The constants are deliberately approximate — false positives are
 // preferable to silent OOMs, and the warning is non-blocking either way.
 
-function estimateWorkerMemoryMb(opts) {
-  const mp = (opts.width * opts.scale) * (opts.height * opts.scale) / 1e6;
-  return Math.round(150 + 30 * mp);
+// Per-worker memory ceiling for a plan: each worker only renders one job
+// at a time, so the worst-case is the largest single job's megapixel
+// footprint, not the sum.
+function estimateWorkerMemoryMb(jobs, opts) {
+  let maxMp = 0;
+  for (const j of jobs) {
+    const mp = (j.width * opts.scale) * (j.height * opts.scale) / 1e6;
+    if (mp > maxMp) maxMp = mp;
+  }
+  return Math.round(150 + 30 * maxMp);
 }
 
 // Available memory the OS could actually hand out without paging — i.e.
@@ -1443,8 +1486,8 @@ function getAvailableMemoryLinux() {
   return null;
 }
 
-function checkMemoryBudget(opts, concurrency) {
-  const perWorker = estimateWorkerMemoryMb(opts);
+function checkMemoryBudget(jobs, opts, concurrency) {
+  const perWorker = estimateWorkerMemoryMb(jobs, opts);
   const total = perWorker * concurrency;
   const available = getAvailableMemoryMb();
   const budget = Math.round(available * 0.7);
@@ -1566,7 +1609,7 @@ async function main() {
   // Memory-budget warning fires in dry-run too — users may want to preview
   // whether a planned --concurrency setting will fit before committing.
   const concurrency = Math.min(opts.concurrency, jobs.length);
-  checkMemoryBudget(opts, concurrency);
+  checkMemoryBudget(jobs, opts, concurrency);
 
   if (opts.dryRun) return;
 
@@ -1592,9 +1635,16 @@ async function main() {
   const codecDesc = opts.codec === 'prores_ks'
     ? `${opts.codec} profile ${proresProfile}`
     : `${opts.codec} crf ${opts.crf}`;
+  // Resolution summary differs when jobs have mixed viewports (per-animation
+  // h2v-viewport metas / bundle attributes vary). Per-job rows in the plan
+  // carry the precise sizes; this line summarizes.
+  const sizes = new Set(jobs.map((j) => `${j.width}x${j.height}`));
+  const sizeDesc = sizes.size === 1
+    ? `${jobs[0].width * opts.scale}×${jobs[0].height * opts.scale} ` +
+      `(${jobs[0].width}×${jobs[0].height} × ${opts.scale})`
+    : `varied resolutions (× ${opts.scale} scale)`;
   console.log(
-    `\nRecording at ${opts.width * opts.scale}×${opts.height * opts.scale} ` +
-    `(${opts.width}×${opts.height} × ${opts.scale}), ${opts.fps}fps, ` +
+    `\nRecording at ${sizeDesc}, ${opts.fps}fps, ` +
     `preset ${tier}: capture ${captureDesc}, ${codecDesc} → .${opts.container}, ` +
     `slowdown ${opts.slowdown}× (wall time = animation × ${opts.slowdown})` +
     (concurrency > 1 ? `, concurrency ${concurrency}` : '') + '.'

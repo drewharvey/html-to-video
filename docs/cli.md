@@ -38,8 +38,14 @@ EXPORT FLAGS
                       per-file metadata wins, then bundle marker, then the
                       default (10s).
   --fps <N>           Frames per second (default: 60).
-  --width <N>         Viewport width in CSS pixels (default: 1280).
-  --height <N>        Viewport height in CSS pixels (default: 720).
+  --width <N>         Viewport width in CSS pixels. When omitted, per-file
+                      <meta name="h2v-viewport"> or bundle marker viewport
+                      attribute wins; default 1280. Passing this flag
+                      overrides every per-animation viewport for the run.
+  --height <N>        Viewport height in CSS pixels. Same precedence as
+                      --width; default 720. --width and --height are a
+                      coupled pair — passing either makes both override
+                      per-animation metas.
   --scale <N>         Device scale factor (default: 3;
                       1280×720 × 3 = 4K).
   --quality-preset <name>
@@ -140,9 +146,10 @@ PER-FILE METADATA
   default (no attribute set, no filename suffix).
 
   Add <meta name="h2v-viewport" content="WxH"> to declare the design
-  viewport (e.g., 1280x720, 1080x1080, 720x1280). Currently used by
-  h2v review to size each animation's iframe correctly across mixed
-  aspect ratios. Default: 1280x720.
+  viewport (e.g., 1280x720, 1080x1080, 720x1280). Used by both h2v
+  export (per-animation recording size) and h2v review (per-iframe
+  sizing on the preview page). The CLI's --width / --height flags
+  override it for ad-hoc runs. Default: 1280x720.
 
 ENVIRONMENT
   PUPPETEER_EXECUTABLE_PATH  Browser executable path. Useful when

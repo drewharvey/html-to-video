@@ -73,9 +73,9 @@ Declare the resolution your animation was designed for:
 
 Format is `<width>x<height>` in CSS pixels — integers, no units, no spaces. Common values: `1280x720` (16:9 landscape, default), `1080x1080` (1:1 square), `720x1280` (9:16 portrait).
 
-Currently used by `h2v review` to size each animation's iframe correctly when previewing a mix of aspect ratios on one page. Without this meta, review assumes 1280×720, which letterboxes or crops non-16:9 content.
+Honored by both `h2v export` (sets each recording's viewport per animation) and `h2v review` (sizes each iframe correctly when previewing a mix of aspect ratios on one page). Without this meta, both default to 1280×720.
 
-`h2v export` does not currently honor this meta — it uses the global `--width` / `--height` flags. Declaring it now is forward-compatible for that future enhancement.
+The CLI's `--width` / `--height` flags override the meta for ad-hoc runs. They're a coupled pair — passing either flag makes both override every per-animation viewport for the rest of the run.
 
 ---
 
