@@ -62,9 +62,11 @@ ARGUMENTS
             the same rules: dotfiles and review.html are skipped.
 
 EXPORT FLAGS
-  --duration <Ns>     Single-file capture duration when no <meta> tag is
-                      present (default: ${DEFAULTS.duration}s). Bundles
-                      ignore this; they use each marker's capture_duration.
+  --duration <Ns>     Capture duration. When passed explicitly, overrides
+                      every per-file <meta name="h2v-duration"> and every
+                      bundle marker's capture_duration. When omitted,
+                      per-file metadata wins, then bundle marker, then the
+                      default (${DEFAULTS.duration}s).
   --fps <N>           Frames per second (default: ${DEFAULTS.fps}).
   --width <N>         Viewport width in CSS pixels (default: ${DEFAULTS.width}).
   --height <N>        Viewport height in CSS pixels (default: ${DEFAULTS.height}).
@@ -164,6 +166,7 @@ function parseArgs(argv) {
   const opts = {
     command,
     duration: DEFAULTS.duration,
+    durationExplicit: false,
     fps: DEFAULTS.fps,
     width: DEFAULTS.width,
     height: DEFAULTS.height,
@@ -190,7 +193,10 @@ function parseArgs(argv) {
       }
       return v;
     };
-    if (a === '--duration') opts.duration = parseDurationFlag(requireValue('--duration'));
+    if (a === '--duration') {
+      opts.duration = parseDurationFlag(requireValue('--duration'));
+      opts.durationExplicit = true;
+    }
     else if (a === '--fps') opts.fps = parsePositiveInt(requireValue('--fps'), '--fps');
     else if (a === '--width') opts.width = parsePositiveInt(requireValue('--width'), '--width');
     else if (a === '--height') opts.height = parsePositiveInt(requireValue('--height'), '--height');
@@ -441,6 +447,8 @@ function buildPlan(inputs, opts) {
           opts.themeSpec,
           `${relativeToHere(inputPath)} (${frame.id})`
         );
+        const durationSeconds = opts.durationExplicit ? opts.duration : frame.durationSeconds;
+        const durationSource = opts.durationExplicit ? 'flag' : 'marker';
         for (const theme of themes) {
           jobs.push(makeJob({
             inputPath, inputBase,
@@ -448,7 +456,8 @@ function buildPlan(inputs, opts) {
             bundleId: frame.id,
             bundleTitle: frame.title,
             bundleHtml: frame.html,
-            durationSeconds: frame.durationSeconds,
+            durationSeconds,
+            durationSource,
             theme,
           }, opts));
         }
@@ -456,8 +465,12 @@ function buildPlan(inputs, opts) {
     } else {
       const meta = extractMetaDuration(text);
       const declaredThemes = extractDeclaredThemes(text);
-      const durationSeconds = meta != null ? meta : opts.duration;
-      const durationSource = meta != null ? 'meta' : 'flag/default';
+      const durationSeconds = opts.durationExplicit
+        ? opts.duration
+        : (meta != null ? meta : opts.duration);
+      const durationSource = opts.durationExplicit
+        ? 'flag'
+        : (meta != null ? 'meta' : 'default');
       const themes = deriveThemes(
         declaredThemes,
         opts.themeSpec,
@@ -555,7 +568,10 @@ function printPlan(jobs, opts) {
   for (const job of jobs) {
     const out = relativeToHere(outputPathFor(job, opts));
     const dur = `${job.durationSeconds}s`;
-    const src = job.durationSource === 'meta' ? ' (from meta tag)' : '';
+    const src =
+      job.durationSource === 'flag' ? ' (--duration override)' :
+      job.durationSource === 'meta' ? ' (from meta tag)' :
+      '';
     console.log(
       `  ${job.label.padEnd(34)} ${dur.padStart(6)} × ${opts.fps}fps = ` +
       `${String(job.totalFrames).padStart(5)} frames → ${out}${src}`

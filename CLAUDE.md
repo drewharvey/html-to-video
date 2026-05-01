@@ -104,6 +104,7 @@ demo/                           # smoke-test fixtures for the three usage modes
 
 - The bundle marker format (`<!-- ===== ANIMATION_START id="..." capture_duration="Ns" ===== -->`, with `FRAME_START` accepted as a legacy alias) — extra attributes like `filename` are tolerated and ignored.
 - The single-file metadata convention (`<meta name="h2v-duration" content="Ns">`).
+- Duration precedence: explicit `--duration` flag > single-file `<meta name="h2v-duration">` > bundle marker's `capture_duration` > built-in default (`DEFAULTS.duration`). Explicit-ness is tracked via `opts.durationExplicit` in `parseArgs` so the built-in default doesn't masquerade as an override. When `--duration` is passed against a bundle, it overrides every marker's `capture_duration` for that run — that's intentional, not a bug.
 - The review page's `</script>` escape (replacing `</` → `<\/` in the embedded JSON `ANIMATIONS = ...`). Without it, any animation containing a `</script>` tag breaks the outer page.
 - Output paths: `output/<basename>.mp4` for single files, `output/<bundle>/<animation-id>.mp4` for bundles.
 - The theme model: pages opt in via `<meta name="h2v-themes" content="...">` (single-file) or `themes="..."` on bundle markers. First declared theme = default = no `data-theme` attribute set, no filename suffix; non-default themes get `data-theme="<name>"` on `<html>` after navigation and a `-<name>` filename suffix. The CLI's `--theme <spec>` accepts a single name, a comma list, or `all`. Pages with no theme meta are single-theme. Theme names match `[a-zA-Z0-9_-]+`.

@@ -287,16 +287,17 @@ Scaling isn't perfectly linear — CPU contention slows individual captures slig
 
 ## Setting per-file duration
 
-For a **single-file animation**, h2v needs to know how long to record. In priority order:
+h2v needs to know how long to record. In priority order:
 
-1. A `<meta>` tag in the HTML's `<head>`:
+1. The `--duration` flag on the command line — when passed, it overrides everything else (single-file `<meta>` tags **and** every bundle marker's `capture_duration`).
+2. A `<meta>` tag in the HTML's `<head>` (single-file animations):
    ```html
    <meta name="h2v-duration" content="8s">
    ```
-2. The `--duration` flag on the command line.
-3. The default (10 s).
+3. The `capture_duration` attribute on each `ANIMATION_START` marker (bundles).
+4. The default (10 s) — only reached for single-file animations with no `<meta>` and no flag.
 
-For **bundles**, the duration of each frame is taken from the `capture_duration` attribute on its `FRAME_START` marker (see below).
+In other words: pass `--duration` only when you want to override what's in the file. Without the flag, every animation uses its own declared duration.
 
 ### Suggested claude.ai prompt addition
 
@@ -336,7 +337,7 @@ A worked example with 12 animations lives in [`demo/`](demo/) — bundle and sta
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--duration <Ns>` | `10s` | Single-file capture duration when no `<meta>` tag is present. Bundles ignore this. |
+| `--duration <Ns>` | `10s` | Capture duration. When passed explicitly, overrides every per-file `<meta name="h2v-duration">` and every bundle marker's `capture_duration`. When omitted, per-file metadata wins, then bundle marker, then this default. |
 | `--fps <N>` | `60` | Frame rate. |
 | `--width <N>` | `1280` | Viewport width in CSS pixels. |
 | `--height <N>` | `720` | Viewport height in CSS pixels. |
