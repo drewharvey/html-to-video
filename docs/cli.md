@@ -81,7 +81,7 @@ EXPORT FLAGS
                       iteration; raise toward 100 for archival. JPEG only.
   --slowdown <N>      Real-time slowdown factor (default: 6). The browser
                       runs animations at 1/N speed so screenshots can keep
-                      up; the resulting MP4 plays back at original speed.
+                      up; the resulting video plays back at original speed.
                       Total recording wall time = animation duration × N.
                       Use 1 to disable (only works if screenshots fit in
                       one frame interval, ~16 ms at 60 fps).
