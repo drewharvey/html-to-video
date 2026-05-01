@@ -18,14 +18,78 @@ const DEFAULTS = {
   duration: 10,
   slowdown: 6,
   outDir: 'output',
+  // Capture frames as JPEG q=95 instead of PNG. JPEG q=95 is visually
+  // lossless (PSNR ≈ 58 dB on the sync-test fixture and the demo
+  // animations) and ~30% faster to encode at 4K. The downstream x264
+  // CRF 18 step dominates the perceptual quality of the final MP4.
+  captureFormat: 'jpeg',
+  captureQuality: 95,
+  // Default codec is libx264 → mp4 — the most compatible combination.
+  // Other codecs and containers are opt-in.
+  codec: 'libx264',
 };
 
-// Capture frames as JPEG q=95 instead of PNG. JPEG q=95 is visually
-// lossless (PSNR ≈ 58 dB on the sync-test fixture and the demo
-// animations) and ~30% faster to encode at 4K. The downstream x264
-// CRF 18 step dominates the perceptual quality of the final MP4.
-const CAPTURE_QUALITY = 95;
-const CAPTURE_EXT = 'jpg';
+const CAPTURE_FORMATS = new Set(['jpeg', 'png']);
+const CAPTURE_EXT_FOR_FORMAT = { jpeg: 'jpg', png: 'png' };
+
+const VIDEO_CODECS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'prores_ks']);
+const VIDEO_CONTAINERS = new Set(['mp4', 'mov', 'webm']);
+
+// Default container per codec, plus the full set of containers each
+// codec is allowed to land in. ProRes outside .mov breaks most NLEs;
+// VP9 outside .webm is fragile across players. Keep the matrix tight.
+const DEFAULT_CONTAINER_FOR_CODEC = {
+  libx264: 'mp4',
+  libx265: 'mp4',
+  'libvpx-vp9': 'webm',
+  prores_ks: 'mov',
+};
+const ALLOWED_CONTAINERS_FOR_CODEC = {
+  libx264: new Set(['mp4', 'mov']),
+  libx265: new Set(['mp4', 'mov']),
+  'libvpx-vp9': new Set(['webm']),
+  prores_ks: new Set(['mov']),
+};
+
+// Quality presets bundle codec, capture-format, capture-quality, and CRF
+// into named tiers. Codec-specific encoder choices (pix_fmt, x264 -preset,
+// -tune, ProRes profile) are derived from the preset name in
+// buildEncodeArgs — that's where the per-codec interpretation of "this
+// tier" lives. Explicit user flags always override the preset's value
+// for that field.
+//
+// `standard` is the default and matches today's no-flag behavior plus
+// two always-on improvements that landed alongside the preset work
+// (-tune animation for x264/x265 and -movflags +faststart for mp4/mov).
+const QUALITY_PRESETS = {
+  max: {
+    captureFormat: 'png',
+    codec: 'prores_ks',
+    crf: 0,
+    // captureQuality not applicable — PNG is lossless. CRF=0 is set so
+    // that overriding --codec to libx264/libx265 still gets a "max tier"
+    // lossless encode rather than defaulting back to CRF 18.
+  },
+  high: {
+    captureFormat: 'jpeg',
+    captureQuality: 100,
+    codec: 'libx264',
+    crf: 12,
+  },
+  standard: {
+    captureFormat: 'jpeg',
+    captureQuality: 95,
+    codec: 'libx264',
+    crf: 18,
+  },
+  draft: {
+    captureFormat: 'jpeg',
+    captureQuality: 80,
+    codec: 'libx264',
+    crf: 28,
+  },
+};
+const QUALITY_PRESET_NAMES = Object.keys(QUALITY_PRESETS);
 
 const SKIP_FILENAMES = new Set(['review.html']);
 
@@ -46,10 +110,12 @@ const ATTR_RE = /(\w+)="([^"]*)"/g;
 // Help & version
 // =========================================================================
 
-const HELP_TEXT = `h2v v${VERSION} — record and preview HTML animations
+const HELP_TEXT = `h2v v${VERSION} — convert HTML animations to video files
 
 USAGE
-  h2v export [<paths...>] [flags]   Record animations as 4K MP4s
+  h2v export [<paths...>] [flags]   Render animations to video. Defaults to
+                                    4K 60fps MP4 (h264); every output
+                                    parameter is configurable.
   h2v review [<paths...>] [flags]   Build a single HTML page that previews
                                     every animation at the given paths
   h2v --help
@@ -72,8 +138,45 @@ EXPORT FLAGS
   --height <N>        Viewport height in CSS pixels (default: ${DEFAULTS.height}).
   --scale <N>         Device scale factor (default: ${DEFAULTS.scale};
                       1280×720 × 3 = 4K).
-  --crf <N>           x264 CRF (default: ${DEFAULTS.crf}; lower = bigger/better;
-                      18 is visually lossless).
+  --quality-preset <name>
+                      Bundled output-quality config. One of:
+                        max       PNG capture + ProRes 4444 (12-bit 4:4:4)
+                                  in .mov. Archival ceiling. Files are
+                                  large; encode is slower.
+                        high      JPEG q=100 + h264 yuv444p crf 12
+                                  -preset veryslow -tune animation. Great
+                                  fidelity; 4:4:4 trades hardware-decoder
+                                  compatibility for chroma accuracy.
+                        standard  JPEG q=95 + h264 yuv420p crf 18
+                                  -preset medium -tune animation. The
+                                  default; visually lossless, plays
+                                  everywhere. (= h2v's no-flag behavior.)
+                        draft     JPEG q=80 + h264 yuv420p crf 28
+                                  -preset ultrafast. Fast iteration; tiny
+                                  files; obvious compression artifacts.
+                      Individual flags below override their preset values.
+  --crf <N>           Quality knob (lower = bigger/better). Applies to
+                      libx264, libx265, and libvpx-vp9. Ignored for
+                      prores_ks (uses a fixed profile instead). Default
+                      depends on --quality-preset.
+  --codec <name>      Video encoder. One of: libx264, libx265,
+                      libvpx-vp9, prores_ks. h264 is the universal default;
+                      h265 gives ~30% smaller files; vp9 targets web
+                      delivery; prores_ks produces editing-friendly masters.
+                      Default depends on --quality-preset.
+  --container <ext>   Output container: mp4, mov, or webm. Auto-derived
+                      from --codec when omitted (h264/h265 → mp4, vp9 →
+                      webm, prores → mov). Set explicitly to override
+                      (e.g. h264 in .mov for older NLE compatibility).
+                      Incompatible codec/container combos error.
+  --capture-format <fmt>
+                      Frame-capture format: jpeg (default) or png. PNG is
+                      lossless but ~30% slower at 4K; useful when feeding
+                      frames into other tooling. Mutually exclusive with
+                      --capture-quality.
+  --capture-quality <N>
+                      JPEG quality 1-100 (default: ${DEFAULTS.captureQuality}). Lower for faster
+                      iteration; raise toward 100 for archival. JPEG only.
   --slowdown <N>      Real-time slowdown factor (default: ${DEFAULTS.slowdown}). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting MP4 plays back at original speed.
@@ -90,7 +193,8 @@ EXPORT FLAGS
                       With no flag, records the default theme (first
                       declared, or no theme handling for unthemed pages).
                       Default theme has no filename suffix; non-default
-                      themes are written as <name>-<theme>.mp4.
+                      themes are written as <name>-<theme>.<ext>, where
+                      <ext> follows --container.
   --concurrency <N>   How many animations to record in parallel (default
                       1). Each parallel slot launches its own browser, so
                       memory scales linearly. Useful for batches; for a
@@ -101,9 +205,11 @@ EXPORT FLAGS
                       run will exceed available memory; it doesn't block.
   --out-dir <path>    Output directory (default: ./${DEFAULTS.outDir}).
   --out <path>        Exact output filename. Only valid when exactly one
-                      MP4 will be produced.
-  --no-ffmpeg         Capture PNGs only; skip stitching and the captures
-                      cleanup step.
+                      video file will be produced. The extension must
+                      match --container.
+  --no-ffmpeg         Skip the encode step. Captured frames stay in
+                      ./captures/ (no cleanup); --capture-format decides
+                      whether they're JPEG or PNG.
   --dry-run           Print the recording plan and exit (no browser needed).
 
 REVIEW FLAGS
@@ -177,6 +283,15 @@ function parseArgs(argv) {
     concurrency: 1,
     outDir: DEFAULTS.outDir,
     outOverride: null,
+    captureFormat: DEFAULTS.captureFormat,
+    captureQuality: DEFAULTS.captureQuality,
+    captureQualityExplicit: false,
+    captureFormatExplicit: false,
+    codec: DEFAULTS.codec,
+    codecExplicit: false,
+    crfExplicit: false,
+    container: null,
+    qualityPreset: 'standard',
     skipFfmpeg: false,
     dryRun: false,
     skipOpen: false,
@@ -201,12 +316,29 @@ function parseArgs(argv) {
     else if (a === '--width') opts.width = parsePositiveInt(requireValue('--width'), '--width');
     else if (a === '--height') opts.height = parsePositiveInt(requireValue('--height'), '--height');
     else if (a === '--scale') opts.scale = parsePositiveInt(requireValue('--scale'), '--scale');
-    else if (a === '--crf') opts.crf = parseIntInRange(requireValue('--crf'), '--crf', 0, 51);
+    else if (a === '--crf') {
+      opts.crf = parseIntInRange(requireValue('--crf'), '--crf', 0, 51);
+      opts.crfExplicit = true;
+    }
     else if (a === '--slowdown') opts.slowdown = parsePositiveInt(requireValue('--slowdown'), '--slowdown');
     else if (a === '--theme') opts.themeSpec = parseThemeFlag(requireValue('--theme'));
     else if (a === '--concurrency') opts.concurrency = parsePositiveInt(requireValue('--concurrency'), '--concurrency');
     else if (a === '--out-dir') opts.outDir = requireValue('--out-dir');
     else if (a === '--out') opts.outOverride = requireValue('--out');
+    else if (a === '--capture-format') {
+      opts.captureFormat = parseCaptureFormat(requireValue('--capture-format'));
+      opts.captureFormatExplicit = true;
+    }
+    else if (a === '--capture-quality') {
+      opts.captureQuality = parseIntInRange(requireValue('--capture-quality'), '--capture-quality', 1, 100);
+      opts.captureQualityExplicit = true;
+    }
+    else if (a === '--codec') {
+      opts.codec = parseCodec(requireValue('--codec'));
+      opts.codecExplicit = true;
+    }
+    else if (a === '--container') opts.container = parseContainer(requireValue('--container'));
+    else if (a === '--quality-preset') opts.qualityPreset = parseQualityPreset(requireValue('--quality-preset'));
     else if (a === '--no-ffmpeg') opts.skipFfmpeg = true;
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--no-open') opts.skipOpen = true;
@@ -255,6 +387,89 @@ function parseIntInRange(s, label, min, max) {
     process.exit(2);
   }
   return n;
+}
+
+function parseCaptureFormat(s) {
+  const v = String(s).toLowerCase();
+  if (!CAPTURE_FORMATS.has(v)) {
+    console.error(`error: --capture-format must be one of: ${[...CAPTURE_FORMATS].join(', ')} (got: ${s})`);
+    process.exit(2);
+  }
+  return v;
+}
+
+function parseCodec(s) {
+  const v = String(s);
+  if (!VIDEO_CODECS.has(v)) {
+    console.error(`error: --codec must be one of: ${[...VIDEO_CODECS].join(', ')} (got: ${s})`);
+    process.exit(2);
+  }
+  return v;
+}
+
+function parseContainer(s) {
+  const v = String(s).toLowerCase();
+  if (!VIDEO_CONTAINERS.has(v)) {
+    console.error(`error: --container must be one of: ${[...VIDEO_CONTAINERS].join(', ')} (got: ${s})`);
+    process.exit(2);
+  }
+  return v;
+}
+
+function parseQualityPreset(s) {
+  const v = String(s).toLowerCase();
+  if (!QUALITY_PRESETS[v]) {
+    console.error(`error: --quality-preset must be one of: ${QUALITY_PRESET_NAMES.join(', ')} (got: ${s})`);
+    process.exit(2);
+  }
+  return v;
+}
+
+// Resolve and validate codec/container/capture flags after parsing.
+// Mutates opts in place (applies the quality preset, then validates).
+// Explicit user flags always override the preset for that field.
+// Exits with a clear error on incompatible combos.
+function resolveExportOpts(opts) {
+  const preset = QUALITY_PRESETS[opts.qualityPreset];
+  if (!opts.captureFormatExplicit && preset.captureFormat != null) {
+    opts.captureFormat = preset.captureFormat;
+  }
+  if (!opts.captureQualityExplicit && preset.captureQuality != null) {
+    opts.captureQuality = preset.captureQuality;
+  }
+  if (!opts.codecExplicit && preset.codec != null) {
+    opts.codec = preset.codec;
+  }
+  if (!opts.crfExplicit && preset.crf != null) {
+    opts.crf = preset.crf;
+  }
+
+  if (opts.captureFormat === 'png' && opts.captureQualityExplicit) {
+    console.error('error: --capture-quality only applies to JPEG capture; remove it or use --capture-format jpeg');
+    process.exit(2);
+  }
+
+  const allowedContainers = ALLOWED_CONTAINERS_FOR_CODEC[opts.codec];
+  if (opts.container == null) {
+    opts.container = DEFAULT_CONTAINER_FOR_CODEC[opts.codec];
+  } else if (!allowedContainers.has(opts.container)) {
+    const allowed = [...allowedContainers].join(', ');
+    console.error(
+      `error: codec ${opts.codec} cannot be packaged in .${opts.container} (allowed: ${allowed})`
+    );
+    process.exit(2);
+  }
+
+  if (opts.outOverride) {
+    const ext = path.extname(opts.outOverride).slice(1).toLowerCase();
+    if (ext && ext !== opts.container) {
+      console.error(
+        `error: --out extension .${ext} doesn't match container .${opts.container}. ` +
+        `Either rename the output or pass --container ${ext} (if codec ${opts.codec} allows it).`
+      );
+      process.exit(2);
+    }
+  }
 }
 
 function parseThemeFlag(s) {
@@ -516,10 +731,11 @@ function outputPathFor(job, opts) {
   }
   const outDir = path.resolve(cwd, opts.outDir);
   const themeSuffix = job.theme ? '-' + job.theme : '';
+  const ext = opts.container;
   if (job.mode === 'bundle') {
-    return path.join(outDir, job.inputBase, `${job.bundleId}${themeSuffix}.mp4`);
+    return path.join(outDir, job.inputBase, `${job.bundleId}${themeSuffix}.${ext}`);
   }
-  return path.join(outDir, `${job.inputBase}${themeSuffix}.mp4`);
+  return path.join(outDir, `${job.inputBase}${themeSuffix}.${ext}`);
 }
 
 function validatePlan(jobs, opts) {
@@ -689,6 +905,11 @@ async function recordJob(browser, job, opts, capturesRoot) {
     fs.rmSync(captureDir, { recursive: true, force: true });
     fs.mkdirSync(captureDir, { recursive: true });
 
+    const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
+    const screenshotOpts = opts.captureFormat === 'png'
+      ? { type: 'png' }
+      : { type: 'jpeg', quality: opts.captureQuality };
+
     // Pace screenshots at S × frame-interval real ms.
     const tickMsReal = (1000 / opts.fps) * opts.slowdown;
     const startReal = Date.now();
@@ -696,11 +917,10 @@ async function recordJob(browser, job, opts, capturesRoot) {
       const target = startReal + i * tickMsReal;
       const wait = target - Date.now();
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-      const fileName = String(i).padStart(4, '0') + '.' + CAPTURE_EXT;
+      const fileName = String(i).padStart(4, '0') + '.' + captureExt;
       await page.screenshot({
+        ...screenshotOpts,
         path: path.join(captureDir, fileName),
-        type: 'jpeg',
-        quality: CAPTURE_QUALITY,
       });
       if (!opts.quietProgress && (i % opts.fps === 0 || i === job.totalFrames)) {
         process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
@@ -728,18 +948,105 @@ function ensureFfmpeg() {
   }
 }
 
+// Per-codec encode args. The quality preset (opts.qualityPreset) influences
+// codec-specific encoder choices: pix_fmt subsampling, x264/x265 -preset
+// (effort level), -tune, and the ProRes profile. Higher tiers reach for
+// 4:4:4 chroma and the slowest encoder presets; lower tiers prioritize
+// encode speed. The preset's CRF/codec/capture choices were already
+// applied to opts in resolveExportOpts.
+function buildEncodeArgs(opts) {
+  const tier = opts.qualityPreset;
+  switch (opts.codec) {
+    case 'libx264':
+    case 'libx265': {
+      // High and max tiers use full 4:4:4 chroma. Acceptable for our
+      // content (HTML animations, often saturated colors, sharp edges)
+      // at the cost of compatibility with some hardware h264 decoders
+      // and Safari.
+      const pixFmt = (tier === 'high' || tier === 'max') ? 'yuv444p' : 'yuv420p';
+      const profileArgs = pixFmt === 'yuv444p' ? ['-profile:v', 'high444'] : [];
+      const encoderPreset =
+        tier === 'high' || tier === 'max' ? 'veryslow' :
+        tier === 'draft' ? 'ultrafast' :
+        'medium';
+      // -tune animation is purpose-built for animated content (more
+      // reference frames, deblocking adjustments, psy-rd weighting tuned
+      // for sharp edges and flat regions). x264's "ultrafast" preset
+      // disables most of what tune turns on, so we skip it for draft.
+      const tuneArgs = tier === 'draft' ? [] : ['-tune', 'animation'];
+      // -tag:v hvc1 makes h265 .mp4 playable in QuickTime/Safari; harmless
+      // in .mov. Without it most Apple players reject the stream.
+      const hvcTag = opts.codec === 'libx265' && (opts.container === 'mp4' || opts.container === 'mov')
+        ? ['-tag:v', 'hvc1'] : [];
+      // Silence libx265's verbose per-frame stats (it has its own logger
+      // that ffmpeg's -loglevel doesn't reach).
+      const x265Quiet = opts.codec === 'libx265'
+        ? ['-x265-params', 'log-level=error'] : [];
+      return [
+        '-c:v', opts.codec,
+        '-pix_fmt', pixFmt,
+        '-crf', String(opts.crf),
+        ...profileArgs,
+        '-preset', encoderPreset,
+        ...tuneArgs,
+        ...hvcTag,
+        ...x265Quiet,
+      ];
+    }
+    case 'libvpx-vp9': {
+      // VP9 quality knob is -deadline + -cpu-used. "best" with cpu-used 0
+      // is the slowest, highest-quality mode; "realtime" with cpu-used 8
+      // is the fastest. -b:v 0 puts libvpx in constant-quality (CRF) mode.
+      const deadline = tier === 'draft' ? 'realtime' : 'best';
+      const cpuUsed = tier === 'draft' ? '8' : '0';
+      return [
+        '-c:v', 'libvpx-vp9',
+        '-pix_fmt', 'yuv420p',
+        '-crf', String(opts.crf),
+        '-b:v', '0',
+        '-deadline', deadline,
+        '-cpu-used', cpuUsed,
+      ];
+    }
+    case 'prores_ks': {
+      // Profile 4 = ProRes 4444 (12-bit 4:4:4) for max tier. Profile 3 =
+      // HQ (10-bit 4:2:2) for everything else — the editing-friendly
+      // default. -vendor apl0 marks the file as Apple-vendor ProRes,
+      // which some pickier NLEs require. ProRes ignores --crf entirely.
+      const profile = tier === 'max' ? '4' : '3';
+      const pixFmt = tier === 'max' ? 'yuv444p10le' : 'yuv422p10le';
+      const vendor = tier === 'max' ? ['-vendor', 'apl0'] : [];
+      return [
+        '-c:v', 'prores_ks',
+        '-profile:v', profile,
+        '-pix_fmt', pixFmt,
+        ...vendor,
+      ];
+    }
+    default:
+      throw new Error(`unhandled codec: ${opts.codec}`);
+  }
+}
+
 function ffmpegStitch(captureDir, outPath, opts) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
+    // -movflags +faststart reorders the moov atom to the start of the
+    // file so playback can begin while the file is still downloading.
+    // Critical for web embedding; harmless for local playback. Only
+    // applies to mp4/mov; webm is a Matroska variant with its own seek
+    // index.
+    const faststart = (opts.container === 'mp4' || opts.container === 'mov')
+      ? ['-movflags', '+faststart'] : [];
     const args = [
       '-y',
       '-loglevel', 'error',
       '-framerate', String(opts.fps),
       '-start_number', '1',
-      '-i', path.join(captureDir, '%04d.' + CAPTURE_EXT),
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-crf', String(opts.crf),
+      '-i', path.join(captureDir, '%04d.' + captureExt),
+      ...buildEncodeArgs(opts),
+      ...faststart,
       outPath,
     ];
     const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'inherit', 'inherit'] });
@@ -1224,6 +1531,8 @@ async function main() {
     return runReview(paths, opts);
   }
 
+  resolveExportOpts(opts);
+
   const cwd = process.cwd();
   const inputs = discoverInputs(paths, cwd);
 
@@ -1264,9 +1573,18 @@ async function main() {
   fs.mkdirSync(capturesRoot, { recursive: true });
   fs.mkdirSync(path.resolve(cwd, opts.outDir), { recursive: true });
 
+  const captureDesc = opts.captureFormat === 'png'
+    ? 'png'
+    : `jpeg q=${opts.captureQuality}`;
+  const tier = opts.qualityPreset;
+  const proresProfile = tier === 'max' ? '4 (4444)' : '3 (HQ)';
+  const codecDesc = opts.codec === 'prores_ks'
+    ? `${opts.codec} profile ${proresProfile}`
+    : `${opts.codec} crf ${opts.crf}`;
   console.log(
     `\nRecording at ${opts.width * opts.scale}×${opts.height * opts.scale} ` +
-    `(${opts.width}×${opts.height} × ${opts.scale}), ${opts.fps}fps, crf ${opts.crf}, ` +
+    `(${opts.width}×${opts.height} × ${opts.scale}), ${opts.fps}fps, ` +
+    `preset ${tier}: capture ${captureDesc}, ${codecDesc} → .${opts.container}, ` +
     `slowdown ${opts.slowdown}× (wall time = animation × ${opts.slowdown})` +
     (concurrency > 1 ? `, concurrency ${concurrency}` : '') + '.'
   );

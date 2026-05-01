@@ -1,8 +1,10 @@
 # html-to-video
 
-Record HTML animations as 4K MP4s. Drop a file in a folder, run `h2v export`, get a video.
+Convert HTML animations to video files. Drop a file in a folder, run `h2v export`, get a video.
 
-Designed for the workflow of generating animations with Claude (e.g. at claude.ai) and exporting them locally without dragging anything into a screen recorder.
+Defaults to 4K 60fps MP4 (h264) because that's what most users want, but every output parameter is configurable — alternate codecs (h265, VP9, ProRes), containers (mp4/mov/webm), frame-capture format and quality, resolution, fps, and CRF.
+
+Designed for the workflow of generating animations with Claude (e.g. at claude.ai) and exporting them locally without dragging anything into a screen recorder, but it'll happily render any HTML file with animations into video.
 
 The package is `html-to-video`; the daily-typing command is `h2v` (with `html-to-video` available as a longer alias).
 
@@ -22,7 +24,7 @@ cd /path/to/your/animations
 h2v export                       # records every *.html in this dir
 ```
 
-That's it. MP4s land in `./output/`.
+That's it. Videos land in `./output/` (default `.mp4`; the extension follows `--container`).
 
 `npm install -g .` copies the current state of the repo into your global `node_modules`. `npm link` creates a symlink from your global bin to this directory, so any edits to `cli.js` are picked up the next time you run `h2v` — useful if you plan to hack on it. Pick whichever you prefer; the uninstall steps below cover both.
 
@@ -70,7 +72,7 @@ h2v export animation.html        # one file
 h2v export bundle.html           # bundles auto-detected
 h2v export a.html b.html dir/    # explicit list, mixing files and dirs
 
-h2v export --theme all           # one MP4 per declared theme
+h2v export --theme all           # one video per declared theme
 h2v export --duration 8s solo.html
 themeh2v export --dry-run             # print plan without recording
 
@@ -82,7 +84,7 @@ h2v review ./anims --out r.html  # save to a real path instead of a tmpfile
 h2v review ./anims --no-open     # write the file, print its path, exit
 ```
 
-Default settings match the original recording configuration that produced the reference videos: 60fps, 1280×720 viewport with deviceScaleFactor 3 (so screenshots come out 3840×2160 = 4K), x264 with `crf 18` and `yuv420p`. All overridable via flags.
+Default settings match the `standard` quality preset: 60fps, 1280×720 viewport with deviceScaleFactor 3 (so screenshots come out 3840×2160 = 4K), JPEG q=95 frame captures, x264 with `crf 18`, `yuv420p`, `-preset medium -tune animation -movflags +faststart`, packaged in `.mp4`. Switch tiers with `--quality-preset max|high|draft`, or override individual knobs — see [Output format & quality](#output-format--quality) and the [flag reference](#flag-reference) below.
 
 In **directory mode** (no path args, or when a directory is passed) `h2v` skips files starting with `.` and any file literally named `review.html`. Explicitly named file arguments bypass these filters — if you want to record `review.html`, just name it directly.
 
@@ -124,7 +126,7 @@ If the cleanup step fails (file in use, permissions, etc.), `h2v` prints a warni
    - `requestAnimationFrame` callback timestamps are scaled the same way
 3. After navigation, `h2v` slows CSS animations and transitions by the matching factor via the CDP Animation domain (`Animation.setPlaybackRate(1/S)`).
 4. With both layers slowed identically, a 1-second animation takes `S` seconds of wall time. `h2v` captures one PNG every `(1000 / fps) × S` ms of wall time, so each frame lands at the correct moment of the original animation.
-5. JPEGs (q=95, visually lossless against the downstream x264 step) go to `./captures/<job>/0001.jpg` … and ffmpeg stitches them into MP4s with `-c:v libx264 -pix_fmt yuv420p -crf 18`. The output plays back at the original speed.
+5. Frame captures (default JPEG q=95, configurable via `--capture-format` / `--capture-quality`) go to `./captures/<job>/0001.jpg` … and ffmpeg stitches them into the configured container (default `.mp4` from `libx264 -pix_fmt yuv420p -crf 18`). The output plays back at the original speed.
 6. `./captures/` is wiped on exit — both on success and failure — unless `--no-ffmpeg` is set.
 
 **Trade-off:** total recording wall time = animation duration × slowdown. With the default S = 6, a 5-second animation takes 30 seconds to record. If you see CSS/JS desync (e.g. a transition finishing before its JS counterpart) on a slow machine, raise `--slowdown` until both layers stay in lockstep.
@@ -133,7 +135,7 @@ If the cleanup step fails (file in use, permissions, etc.), `h2v` prints a warni
 
 ## Hiding UI controls during recording
 
-Animations often include on-page affordances — a Reset button, a theme toggle, a Replay control — that you want visible while authoring but **not** in the recorded MP4. h2v gives the page two hooks for this.
+Animations often include on-page affordances — a Reset button, a theme toggle, a Replay control — that you want visible while authoring but **not** in the recorded video. h2v gives the page two hooks for this.
 
 **The common case: mark controls with `data-h2v-hide`.** During recording, h2v injects a stylesheet that hides any element carrying this attribute. Group controls in one container or mark them individually:
 
@@ -165,7 +167,7 @@ Neither attribute is set during `h2v review` — review is for inspection, so co
 
 ## Theming animations
 
-Optional. If your animation supports more than one visual theme (light/dark, brand variants, high-contrast, etc.), declare them in a `<meta>` tag and h2v can record one MP4 per theme.
+Optional. If your animation supports more than one visual theme (light/dark, brand variants, high-contrast, etc.), declare them in a `<meta>` tag and h2v can record one video per theme.
 
 ### Page contract
 
@@ -190,7 +192,7 @@ Theme names can be anything matching `[a-zA-Z0-9_-]+`. `dark` / `light` are conv
 <meta name="h2v-themes" content="default,sunset,ocean,high-contrast">
 ```
 
-The first listed theme is the default — no attribute set, no filename suffix. Every other theme sets `data-theme="<name>"` on `<html>`, and the resulting MP4 is suffixed with `-<name>` (so `anim.mp4`, `anim-sunset.mp4`, `anim-ocean.mp4`, `anim-high-contrast.mp4`).
+The first listed theme is the default — no attribute set, no filename suffix. Every other theme sets `data-theme="<name>"` on `<html>`, and the resulting file is suffixed with `-<name>` (so `anim.mp4`, `anim-sunset.mp4`, `anim-ocean.mp4`, `anim-high-contrast.mp4` with the default container; the extension follows `--container`).
 
 Pages without a `h2v-themes` meta are single-theme — h2v records them once, no theme handling.
 
@@ -198,10 +200,10 @@ Pages without a `h2v-themes` meta are single-theme — h2v records them once, no
 
 | Flag | Effect |
 |---|---|
-| (none) | Record only the default (first declared) theme. Unthemed pages get one MP4. |
+| (none) | Record only the default (first declared) theme. Unthemed pages get one video. |
 | `--theme <name>` | Record only this theme. Must be declared by the page. |
 | `--theme a,b,c` | Record this list. Each must be declared. |
-| `--theme all` | Record every declared theme. Unthemed pages still get one MP4. |
+| `--theme all` | Record every declared theme. Unthemed pages still get one video. |
 
 If you pass an explicit theme that the page hasn't declared, h2v errors out and lists what's declared. This catches typos and prevents silent identical outputs.
 
@@ -311,7 +313,7 @@ Then `h2v export` picks the right length automatically with no flags.
 
 ## Bundle format (multi-frame storyboards)
 
-Multiple animations can live in one HTML file, each delimited by markers. `h2v` emits one MP4 per animation, named `output/<bundle-base>/<animation-id>.mp4`.
+Multiple animations can live in one HTML file, each delimited by markers. `h2v` emits one video per animation, named `output/<bundle-base>/<animation-id>.<ext>` (where `<ext>` follows `--container`; default `.mp4`).
 
 ```html
 <!-- ===== ANIMATION_START id="intro" capture_duration="5s" ===== -->
@@ -333,6 +335,77 @@ A worked example with 12 animations lives in [`demo/`](demo/) — bundle and sta
 
 ---
 
+## Output format & quality
+
+The defaults (h264 in `.mp4`, JPEG q=95 frame captures, CRF 18) are tuned for the "looks great, plays everywhere" common case. For other targets, two layers are configurable: **frame capture** (intermediate stills h2v writes during recording) and **video encoding** (the final file).
+
+### Quality presets
+
+`--quality-preset <name>` bundles the dozen-or-so encode parameters that move together into a single named tier. The default is `standard`; passing no flag is identical to `--quality-preset standard`. Individual flags (`--codec`, `--crf`, `--capture-format`, `--capture-quality`) override the preset's value for that field.
+
+| Preset | Frame capture | Video encode | Use case |
+|---|---|---|---|
+| `max` | PNG (lossless) | ProRes 4444 (profile 4, 12-bit 4:4:4, `-vendor apl0`) in `.mov` | Archival ceiling, NLE handoff. Files are ~10× larger than ProRes HQ; encode is slower. |
+| `high` | JPEG q=100 | h264 `yuv444p` `-profile:v high444` `-crf 12 -preset veryslow -tune animation` in `.mp4` | Distribution-grade visual lossless. Trades hardware-decoder/Safari compatibility for full chroma. |
+| `standard` (default) | JPEG q=95 | h264 `yuv420p -crf 18 -preset medium -tune animation -movflags +faststart` in `.mp4` | The default. Visually lossless, plays everywhere, web-streamable. |
+| `draft` | JPEG q=80 | h264 `yuv420p -crf 28 -preset ultrafast -movflags +faststart` in `.mp4` | Fast iteration. Encode is ~3-4× faster; files are ~5-8× smaller than `standard`. |
+
+Two improvements apply across every h264/h265 encode regardless of preset:
+
+- **`-tune animation`** (skipped at `draft` since `-preset ultrafast` disables most of what tune turns on): a built-in x264/x265 setting calibrated for animated content (more reference frames, deblocking adjustments, psy-rd weighting tuned for sharp edges and flat regions). Real file-size win at equal quality on h2v's typical content.
+- **`-movflags +faststart`** for any `.mp4`/`.mov` output: reorders the moov atom so playback can begin while the file is still downloading. Free win for web embedding; harmless for local playback.
+
+You can still mix preset and explicit flags. For example:
+
+```
+h2v export hero.html --quality-preset max --codec libx264   # max tier with h264 (lossless yuv444p crf 0)
+h2v export hero.html --quality-preset high --codec libx265  # h265 at high tier, mp4
+h2v export hero.html --quality-preset draft --crf 23        # draft preset, custom CRF
+```
+
+
+
+### Frame capture
+
+| Combination | When to use |
+|---|---|
+| `--capture-format jpeg --capture-quality 95` (default) | Fast, visually lossless, smallest captures footprint. |
+| `--capture-format jpeg --capture-quality 70` | Fast iteration / preview drafts. |
+| `--capture-format png` | Lossless masters; downstream tools that need true PNG input; combined with `--no-ffmpeg` if you only want frames. |
+
+`--capture-quality` only applies to JPEG; passing it together with `--capture-format png` is an error.
+
+### Video encoding
+
+Pick a codec and h2v auto-picks the matching container. Override `--container` only when you need a non-default pairing.
+
+| `--codec` | Default container | Allowed containers | Notes |
+|---|---|---|---|
+| `libx264` (default) | `mp4` | `mp4`, `mov` | Universally compatible. CRF 18 is visually lossless. |
+| `libx265` | `mp4` | `mp4`, `mov` | ~30% smaller files at the same CRF. h2v adds `-tag:v hvc1` so the result plays in QuickTime/Safari. |
+| `libvpx-vp9` | `webm` | `webm` | Web delivery without h264 licensing. CRF range similar (try `--crf 30` for typical web sizes). |
+| `prores_ks` | `mov` | `mov` | Editing-friendly master. Profile 3 (HQ, 10-bit 4:2:2). Ignores `--crf`. Files are large. |
+
+**Examples:**
+
+```
+h2v export hero.html                                    # default: h264 in .mp4
+h2v export hero.html --codec libx265                    # h265 in .mp4
+h2v export hero.html --codec libx265 --container mov    # h265 in .mov
+h2v export hero.html --codec libvpx-vp9 --crf 30        # web-sized .webm
+h2v export hero.html --codec prores_ks                  # editing master in .mov
+h2v export hero.html --capture-format png --no-ffmpeg   # PNG frames, no encode
+```
+
+If you pass `--out <path>`, the extension must match the resolved container:
+
+```
+h2v export a.html --codec libx265 --out hero.mp4        # OK (h265 in mp4)
+h2v export a.html --codec libx265 --out hero.webm       # error (h265 not allowed in webm)
+```
+
+---
+
 ## Flag reference
 
 | Flag | Default | Effect |
@@ -342,13 +415,18 @@ A worked example with 12 animations lives in [`demo/`](demo/) — bundle and sta
 | `--width <N>` | `1280` | Viewport width in CSS pixels. |
 | `--height <N>` | `720` | Viewport height in CSS pixels. |
 | `--scale <N>` | `3` | Device scale factor. With defaults this gives 3840×2160 (4K). |
-| `--crf <N>` | `18` | x264 CRF (0–51). Lower = bigger/better; 18 is visually lossless. |
-| `--slowdown <N>` | `6` | Real-time slowdown factor. The browser plays animations at `1/N` speed so screenshots can keep up; the resulting MP4 plays back at the original speed. Total recording wall time = animation duration × N. Raise on slow machines if you see desync. Use `1` to disable (only works if a screenshot fits in one frame interval — usually not at 4K). |
+| `--quality-preset <name>` | `standard` | Bundled output-quality tier: `max`, `high`, `standard`, or `draft`. Drives codec, capture format/quality, CRF, encoder preset, pix_fmt, profile, and tune choice. See [Quality presets](#quality-presets). Individual flags below override the preset. |
+| `--crf <N>` | preset-driven | Quality knob (0–51). Lower = bigger/better; 18 is visually lossless. Applies to `libx264`, `libx265`, and `libvpx-vp9`. Ignored for `prores_ks` (uses a fixed profile instead). |
+| `--codec <name>` | preset-driven | Video encoder: `libx264`, `libx265`, `libvpx-vp9`, or `prores_ks`. See [Output format & quality](#output-format--quality). |
+| `--container <ext>` | auto | Output container: `mp4`, `mov`, or `webm`. Auto-derived from `--codec` when omitted. Set explicitly to override (e.g. h264 in `.mov` for older NLE workflows). Incompatible codec/container combos error. |
+| `--capture-format <fmt>` | preset-driven | Frame-capture format: `jpeg` or `png`. PNG is lossless but ~30% slower at 4K. Mutually exclusive with `--capture-quality`. |
+| `--capture-quality <N>` | preset-driven | JPEG quality 1–100. Lower for fast iteration; raise toward 100 for archival. JPEG only. |
+| `--slowdown <N>` | `6` | Real-time slowdown factor. The browser plays animations at `1/N` speed so screenshots can keep up; the resulting video plays back at the original speed. Total recording wall time = animation duration × N. Raise on slow machines if you see desync. Use `1` to disable (only works if a screenshot fits in one frame interval — usually not at 4K). |
 | `--theme <spec>` | — | Themes to record. `<name>`, comma list, or `all`. Each requested theme must be declared via `<meta name="h2v-themes" content="...">` (see [Theming animations](#theming-animations)). With no flag, the default theme is used. |
 | `--concurrency <N>` | `1` | Record up to N animations in parallel, each in its own browser process. Memory scales linearly. Has no effect for a single animation; suggested `8` on 16 GB, `12` on 32 GB+, `3` on 8 GB. See [Parallel batch recording](#parallel-batch-recording). |
 | `--out-dir <path>` | `./output` | Output directory. |
-| `--out <path>` | — | Exact output filename. Only valid when exactly one MP4 will be produced. |
-| `--no-ffmpeg` | off | Capture PNGs only; skip stitching and the cleanup step. |
+| `--out <path>` | — | Exact output filename. Only valid when exactly one video will be produced. The extension must match `--container`. |
+| `--no-ffmpeg` | off | Skip the encode step. Captured frames stay in `./captures/` (no cleanup) — JPEG or PNG per `--capture-format`. |
 | `--dry-run` | off | Print the recording plan and exit (no browser launched). |
 | `-h`, `--help` | | Show help. |
 | `--version` | | Show version. |
