@@ -32,11 +32,17 @@ h2v export --quality-preset high          # higher-fidelity tier
 h2v export --theme all                    # one video per declared theme
 h2v export --dry-run                      # print plan, no recording
 
+h2v export --paste                        # paste HTML into the terminal,
+                                          # press Enter to start
+pbpaste | h2v export --paste              # macOS clipboard direct
+xclip -o | h2v export --paste             # Linux clipboard direct
+
 h2v review ./anims                        # browser preview of every animation
 h2v review bundle.html --out review.html  # save the preview to a real path
+h2v review --paste                        # paste HTML, preview without saving a file
 ```
 
-Videos land in `./output/` by default; see [`docs/cli.md`](docs/cli.md) for the path scheme, directory-mode filters, and `--out` / `--out-dir` overrides.
+Videos land in `./output/` by default; see [`docs/cli.md`](docs/cli.md) for the path scheme, directory-mode filters, and `--out` / `--out-dir` overrides. `--paste` outputs land in `output/paste/` (bundles) or `output/paste.<ext>` (single-file).
 
 A worked example: [`demo/`](demo/) contains a 12-animation storyboard exercising all three usage modes (single file, directory, bundle).
 

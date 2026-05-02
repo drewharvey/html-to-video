@@ -121,6 +121,13 @@ EXPORT FLAGS
                       ./captures/ (no cleanup); --capture-format decides
                       whether they're JPEG or PNG.
   --dry-run           Print the recording plan and exit (no browser needed).
+  --paste             Read HTML from the terminal (or piped stdin) instead
+                      of from a file path. Interactive: paste with Ctrl+V,
+                      then press Enter to start. Pipe: pbpaste | h2v export
+                      --paste, or h2v export --paste < bundle.html. Output
+                      lands in output/paste/<id>.<ext> for bundles or
+                      output/paste.<ext> for single-file. Cannot be
+                      combined with positional path arguments.
 
 REVIEW FLAGS
   --out <path>        Write the review page to this path instead of a
@@ -129,6 +136,10 @@ REVIEW FLAGS
                       (No auto-cleanup either.)
   --keep              Don't delete the temp file on exit. (Implied by
                       --out and --no-open.)
+  --paste             Read HTML from the terminal (or piped stdin) instead
+                      of from a file path. Same semantics as the export
+                      flag of the same name; cannot be combined with
+                      positional path arguments.
 
 SHARED FLAGS
   -h, --help          Show this help.

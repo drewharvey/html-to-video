@@ -221,6 +221,13 @@ EXPORT FLAGS
                       ./captures/ (no cleanup); --capture-format decides
                       whether they're JPEG or PNG.
   --dry-run           Print the recording plan and exit (no browser needed).
+  --paste             Read HTML from the terminal (or piped stdin) instead
+                      of from a file path. Interactive: paste with Ctrl+V,
+                      then press Enter to start. Pipe: pbpaste | h2v export
+                      --paste, or h2v export --paste < bundle.html. Output
+                      lands in output/paste/<id>.<ext> for bundles or
+                      output/paste.<ext> for single-file. Cannot be
+                      combined with positional path arguments.
 
 REVIEW FLAGS
   --out <path>        Write the review page to this path instead of a
@@ -229,6 +236,10 @@ REVIEW FLAGS
                       (No auto-cleanup either.)
   --keep              Don't delete the temp file on exit. (Implied by
                       --out and --no-open.)
+  --paste             Read HTML from the terminal (or piped stdin) instead
+                      of from a file path. Same semantics as the export
+                      flag of the same name; cannot be combined with
+                      positional path arguments.
 
 SHARED FLAGS
   -h, --help          Show this help.
@@ -314,6 +325,7 @@ function parseArgs(argv) {
     dryRun: false,
     skipOpen: false,
     keep: false,
+    paste: false,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -366,6 +378,7 @@ function parseArgs(argv) {
     else if (a === '--no-ffmpeg') opts.skipFfmpeg = true;
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--no-open') opts.skipOpen = true;
+    else if (a === '--paste') opts.paste = true;
     else if (a === '--keep') opts.keep = true;
     else if (a === '--help' || a === '-h') {
       printHelp();
@@ -1291,6 +1304,126 @@ function openInBrowser(filePath) {
   });
 }
 
+// =========================================================================
+// --paste: read HTML content from the terminal (or piped stdin) instead
+// of from a file path.
+// =========================================================================
+//
+// On a TTY, we enable bracketed paste mode (the ANSI sequence `\x1b[?2004h`
+// supported by every modern terminal — Terminal.app, iTerm2, gnome-terminal,
+// Windows Terminal, VSCode terminal, etc.) so the terminal wraps any paste
+// in `\x1b[200~ ... \x1b[201~` markers. We buffer everything between those
+// markers as the payload, show a `[pasted N lines, N bytes]` summary the
+// moment the closing marker arrives, then wait for a real Enter (a CR/LF
+// outside the markers) to commit. Ctrl+C cancels; Ctrl+D commits as a
+// fallback for any terminal where bracketed paste somehow doesn't work.
+//
+// On non-TTY stdin (e.g. `pbpaste | h2v export --paste`), we skip the
+// interactive prompt entirely and just read stdin to EOF. Same code path
+// downstream — the reader returns the buffered HTML either way.
+
+function readPastedHtml() {
+  if (!process.stdin.isTTY) {
+    return new Promise((resolve, reject) => {
+      let buf = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (chunk) => (buf += chunk));
+      process.stdin.on('end', () => {
+        if (buf.trim().length === 0) {
+          console.error('error: --paste received no content on stdin');
+          process.exit(1);
+        }
+        resolve(buf);
+      });
+      process.stdin.on('error', reject);
+    });
+  }
+
+  return new Promise((resolve) => {
+    process.stdout.write('\x1b[?2004h'); // enable bracketed paste
+    process.stdin.setRawMode(true);
+    process.stdin.setEncoding('utf8');
+    process.stdin.resume();
+
+    console.error('Paste HTML, then press Enter to start (Ctrl-C to cancel).');
+
+    let buffer = '';
+    let inPaste = false;
+    let pasted = '';
+
+    const cleanup = () => {
+      process.stdout.write('\x1b[?2004l'); // disable bracketed paste
+      try { process.stdin.setRawMode(false); } catch { /* ignore */ }
+      process.stdin.removeListener('data', onData);
+      process.stdin.pause();
+    };
+
+    const commit = () => {
+      cleanup();
+      if (buffer.trim().length === 0) {
+        console.error('error: no content received');
+        process.exit(1);
+      }
+      resolve(buffer);
+    };
+
+    const cancel = (code = 130) => {
+      cleanup();
+      process.stderr.write('\nCancelled.\n');
+      process.exit(code);
+    };
+
+    const onData = (chunk) => {
+      let i = 0;
+      while (i < chunk.length) {
+        if (chunk.startsWith('\x1b[200~', i)) {
+          inPaste = true;
+          pasted = '';
+          i += 6;
+          continue;
+        }
+        if (chunk.startsWith('\x1b[201~', i)) {
+          inPaste = false;
+          buffer += pasted;
+          const lines = pasted.split('\n').length;
+          process.stderr.write(`[pasted ${lines} lines, ${pasted.length} bytes]\n`);
+          pasted = '';
+          i += 6;
+          continue;
+        }
+        const ch = chunk[i];
+        const code = chunk.charCodeAt(i);
+        if (inPaste) {
+          pasted += ch;
+          i += 1;
+          continue;
+        }
+        // Outside paste — handle keystrokes.
+        if (code === 3) return cancel();              // Ctrl+C
+        if (code === 4) return commit();              // Ctrl+D (fallback)
+        if (ch === '\r' || ch === '\n') return commit();
+        // Other keystrokes are ignored. We don't echo because raw mode
+        // disables auto-echo; the only meaningful interaction here is
+        // paste + Enter / cancel.
+        i += 1;
+      }
+    };
+
+    process.stdin.on('data', onData);
+  });
+}
+
+// Write paste content to a unique temp directory under a fixed basename
+// so the existing pipeline derives output paths from `paste` (not a
+// timestamped temp filename). Caller is responsible for cleaning up the
+// returned tempDir in a finally block.
+function writePasteToTempFile(html) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'h2v-paste-'));
+  const tempPath = path.join(tempDir, 'paste.html');
+  fs.writeFileSync(tempPath, html);
+  return { tempDir, tempPath };
+}
+
 function buildReviewAnimations(inputs) {
   const animations = [];
   for (const inputPath of inputs) {
@@ -1327,6 +1460,24 @@ function buildReviewAnimations(inputs) {
 }
 
 async function runReview(paths, opts) {
+  // --paste: same flow as export. Materialize to a temp dir; clean up
+  // on process exit. The synthetic basename `paste` falls out of the
+  // existing input-discovery and output-naming logic.
+  let pasteTempDir = null;
+  if (opts.paste) {
+    if (paths.length > 0) {
+      console.error('error: --paste cannot be combined with positional path arguments');
+      process.exit(2);
+    }
+    const html = await readPastedHtml();
+    const written = writePasteToTempFile(html);
+    pasteTempDir = written.tempDir;
+    paths.push(written.tempPath);
+    process.on('exit', () => {
+      try { fs.rmSync(pasteTempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    });
+  }
+
   const cwd = process.cwd();
   const inputs = discoverInputs(paths, cwd);
 
@@ -1587,6 +1738,24 @@ async function main() {
 
   resolveExportOpts(opts);
 
+  // --paste: read HTML interactively (or from non-TTY stdin) instead of
+  // from a file. We materialize the paste to a temp file with the fixed
+  // basename `paste` so the existing pipeline derives output paths
+  // automatically (output/paste/<id>.<ext> for bundles,
+  // output/paste.<ext> for single-file). Cleanup runs in the finally
+  // below regardless of how export exits.
+  let pasteTempDir = null;
+  if (opts.paste) {
+    if (paths.length > 0) {
+      console.error('error: --paste cannot be combined with positional path arguments');
+      process.exit(2);
+    }
+    const html = await readPastedHtml();
+    const written = writePasteToTempFile(html);
+    pasteTempDir = written.tempDir;
+    paths.push(written.tempPath);
+  }
+
   const cwd = process.cwd();
   const inputs = discoverInputs(paths, cwd);
 
@@ -1665,6 +1834,11 @@ async function main() {
       } catch (err) {
         console.warn('Could not remove captures dir:', err.message);
       }
+    }
+    if (pasteTempDir) {
+      try {
+        fs.rmSync(pasteTempDir, { recursive: true, force: true });
+      } catch { /* ignore */ }
     }
   }
 }
