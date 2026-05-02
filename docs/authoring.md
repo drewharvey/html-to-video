@@ -146,6 +146,7 @@ During `h2v export`, h2v injects a stylesheet `[data-h2v-hide] { display: none !
 
 - **One container.** Put the Reset button, theme switcher, and any other dev affordances into a single `data-h2v-hide` element so they share placement and lifecycle. Two separate `data-h2v-hide` containers in the same animation is a code smell.
 - **Reset button.** Use the label `↺ Reset` (the U+21BA arrow + the word "Reset") and `location.reload()` as the click handler. This restarts every animation deterministically without per-animation state-management JS. The convention is established by the `demo/animations/` storyboard.
+- **Theme persists across Reset.** Because Reset is a full page reload, the in-page theme switcher needs to persist its current selection — otherwise clicking Reset reverts the page to the default theme, which is rarely what the user wants. The pattern: `applyTheme(target)` writes the choice to `sessionStorage` (or removes the key for the default), and a tiny inline `<script>` in `<head>` (before any styles paint) reads it back on load and reapplies. h2v's recording is unaffected — each worker spawns a fresh browser with empty sessionStorage, so the head script is a no-op and h2v's post-load `setAttribute('data-theme', …)` still wins. See [Theme switcher pattern](#theme-switcher-pattern-in-page-ui) for the full implementation.
 - **Theme switcher.** When the animation declares `<meta name="h2v-themes">`, the switcher sits next to the Reset button in the same bar. See [Theme switcher pattern](#theme-switcher-pattern-in-page-ui) below for the behavior contract.
 
 ### `data-h2v-recording` — the advanced case
@@ -245,16 +246,32 @@ Add a visual theme switcher on the page so you can preview each theme in a norma
 **Minimal JS implementation:**
 
 ```js
+// Body, end of <script>:
 const DEFAULT_THEME = 'dark';  // first entry in <meta name="h2v-themes">
 
 function applyTheme(target) {
   if (target === DEFAULT_THEME) {
     document.documentElement.removeAttribute('data-theme');
+    try { sessionStorage.removeItem('h2v-theme'); } catch (e) {}
   } else {
     document.documentElement.setAttribute('data-theme', target);
+    try { sessionStorage.setItem('h2v-theme', target); } catch (e) {}
   }
 }
 ```
+
+```html
+<!-- Head, before any styles paint, so the restored theme is applied
+     before first paint and there's no flash of the default theme: -->
+<script>
+  try {
+    var t = sessionStorage.getItem('h2v-theme');
+    if (t) document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
+```
+
+The `sessionStorage` round-trip survives `location.reload()` (so Reset preserves the user's theme selection) but doesn't leak across browser tabs or sessions. h2v's recording is unaffected — each worker spawns a fresh browser with empty sessionStorage, so the head script is a no-op and h2v's post-load `setAttribute` still wins.
 
 Avoid the older binary `cycleTheme()` pattern that toggles between exactly two themes — it doesn't generalize to three or more, and it doesn't match how h2v records (which always sets the attribute deterministically per theme).
 

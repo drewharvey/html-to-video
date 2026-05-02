@@ -68,7 +68,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
   @keyframes slideUp{to{opacity:1;transform:translateY(0)}}
   .logic-text{font-family:monospace;font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:2px}
 
-</style><meta name="h2v-duration" content="6s"><meta name="h2v-themes" content="dark,light,vibrant"><meta name="h2v-viewport" content="1280x720"></head><body>
+</style><meta name="h2v-duration" content="6s"><meta name="h2v-themes" content="dark,light,vibrant"><meta name="h2v-viewport" content="1280x720"><script>try{var t=sessionStorage.getItem('h2v-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script></head><body>
 <div class="controls" data-h2v-hide><button class="ctrl-btn" onclick="location.reload()">↺ Reset</button><button class="swatch" data-theme-target="dark" aria-label="Dark" aria-pressed="true"></button><button class="swatch" data-theme-target="light" aria-label="Light" aria-pressed="false"></button><button class="swatch" data-theme-target="vibrant" aria-label="Vibrant" aria-pressed="false"></button></div>
 
 <div class="wrapper">
@@ -98,8 +98,18 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
 
 <script>
 const DEFAULT_THEME='dark';
-function applyTheme(t){if(t===DEFAULT_THEME){document.documentElement.removeAttribute('data-theme')}else{document.documentElement.setAttribute('data-theme',t)}syncSwatches()}
+function applyTheme(t){
+  if(t===DEFAULT_THEME){
+    document.documentElement.removeAttribute('data-theme');
+    try{sessionStorage.removeItem('h2v-theme')}catch(e){}
+  }else{
+    document.documentElement.setAttribute('data-theme',t);
+    try{sessionStorage.setItem('h2v-theme',t)}catch(e){}
+  }
+  syncSwatches();
+}
 function syncSwatches(){const c=document.documentElement.getAttribute('data-theme')||DEFAULT_THEME;document.querySelectorAll('.swatch').forEach(b=>b.setAttribute('aria-pressed',b.getAttribute('data-theme-target')===c?'true':'false'))}
+syncSwatches();
 document.querySelectorAll('.swatch').forEach(b=>b.addEventListener('click',()=>applyTheme(b.getAttribute('data-theme-target'))));
 
 </script></body></html>

@@ -67,7 +67,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
   .st.a{background:var(--green-dim);color:var(--green)}.st.r{background:var(--amber-dim);color:var(--amber)}.st.p{background:var(--accent-dim);color:var(--accent)}
   .statusbar{background:var(--surface2);padding:6px 14px;display:flex;justify-content:space-between;border-top:1px solid var(--border);font-size:10px;color:var(--muted);font-family:monospace}
 
-</style><meta name="h2v-duration" content="5s"><meta name="h2v-themes" content="dark,light,vibrant"><meta name="h2v-viewport" content="1280x720"></head><body>
+</style><meta name="h2v-duration" content="5s"><meta name="h2v-themes" content="dark,light,vibrant"><meta name="h2v-viewport" content="1280x720"><script>try{var t=sessionStorage.getItem('h2v-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script></head><body>
 <div class="controls" data-h2v-hide><button class="ctrl-btn" onclick="location.reload()">↺ Reset</button><button class="swatch" data-theme-target="dark" aria-label="Dark" aria-pressed="true"></button><button class="swatch" data-theme-target="light" aria-label="Light" aria-pressed="false"></button><button class="swatch" data-theme-target="vibrant" aria-label="Vibrant" aria-pressed="false"></button></div>
 
 <div class="swing-app">
@@ -83,8 +83,18 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
 
 <script>
 const DEFAULT_THEME='dark';
-function applyTheme(t){if(t===DEFAULT_THEME){document.documentElement.removeAttribute('data-theme')}else{document.documentElement.setAttribute('data-theme',t)}syncSwatches()}
+function applyTheme(t){
+  if(t===DEFAULT_THEME){
+    document.documentElement.removeAttribute('data-theme');
+    try{sessionStorage.removeItem('h2v-theme')}catch(e){}
+  }else{
+    document.documentElement.setAttribute('data-theme',t);
+    try{sessionStorage.setItem('h2v-theme',t)}catch(e){}
+  }
+  syncSwatches();
+}
 function syncSwatches(){const c=document.documentElement.getAttribute('data-theme')||DEFAULT_THEME;document.querySelectorAll('.swatch').forEach(b=>b.setAttribute('aria-pressed',b.getAttribute('data-theme-target')===c?'true':'false'))}
+syncSwatches();
 document.querySelectorAll('.swatch').forEach(b=>b.addEventListener('click',()=>applyTheme(b.getAttribute('data-theme-target'))));
 
 const R=[['1041','Industrial Valve A-7','340','$127.50','a','Active'],['1042','Pressure Gauge B-3','128','$84.00','a','Active'],['1043','Control Module C-1','57','$312.00','r','Review'],['1044','Hydraulic Pump D-9','812','$445.75','a','Active'],['1045','Thermal Sensor E-2','96','$63.20','p','Pending'],['1046','Actuator Assembly F-4','215','$189.00','a','Active'],['1047','Filter Cartridge G-6','1430','$22.50','a','Active'],['1048','Relay Switch H-8','67','$156.80','r','Review']];

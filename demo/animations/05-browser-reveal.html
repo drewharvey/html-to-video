@@ -64,7 +64,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
   .s-table{width:100%;border-collapse:collapse}.s-table th{background:var(--surface3);padding:6px 8px;text-align:left;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}.s-table td{padding:6px 8px;font-size:11px;color:var(--text);font-family:monospace;border-bottom:1px solid var(--surface2)}.s-table .id{color:var(--muted)}
   .s-status{background:var(--surface2);padding:5px 12px;font-size:10px;color:var(--muted);font-family:monospace;border-top:1px solid var(--border)}
 
-</style><meta name="h2v-duration" content="4s"><meta name="h2v-themes" content="dark,light,vibrant"><meta name="h2v-viewport" content="1280x720"></head><body>
+</style><meta name="h2v-duration" content="4s"><meta name="h2v-themes" content="dark,light,vibrant"><meta name="h2v-viewport" content="1280x720"><script>try{var t=sessionStorage.getItem('h2v-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script></head><body>
 <div class="controls" data-h2v-hide><button class="ctrl-btn" onclick="location.reload()">↺ Reset</button><button class="swatch" data-theme-target="dark" aria-label="Dark" aria-pressed="true"></button><button class="swatch" data-theme-target="light" aria-label="Light" aria-pressed="false"></button><button class="swatch" data-theme-target="vibrant" aria-label="Vibrant" aria-pressed="false"></button></div>
 
 <div class="browser" id="browser">
@@ -89,8 +89,18 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
 
 <script>
 const DEFAULT_THEME='dark';
-function applyTheme(t){if(t===DEFAULT_THEME){document.documentElement.removeAttribute('data-theme')}else{document.documentElement.setAttribute('data-theme',t)}syncSwatches()}
+function applyTheme(t){
+  if(t===DEFAULT_THEME){
+    document.documentElement.removeAttribute('data-theme');
+    try{sessionStorage.removeItem('h2v-theme')}catch(e){}
+  }else{
+    document.documentElement.setAttribute('data-theme',t);
+    try{sessionStorage.setItem('h2v-theme',t)}catch(e){}
+  }
+  syncSwatches();
+}
 function syncSwatches(){const c=document.documentElement.getAttribute('data-theme')||DEFAULT_THEME;document.querySelectorAll('.swatch').forEach(b=>b.setAttribute('aria-pressed',b.getAttribute('data-theme-target')===c?'true':'false'))}
+syncSwatches();
 document.querySelectorAll('.swatch').forEach(b=>b.addEventListener('click',()=>applyTheme(b.getAttribute('data-theme-target'))));
 setTimeout(()=>{document.getElementById('browser').classList.add('visible')},500);
 </script></body></html>
