@@ -134,13 +134,19 @@ Animations often include on-page affordances (Reset button, theme toggle, debug 
 Mark elements that should disappear during recording:
 
 ```html
-<div data-h2v-hide class="controls">
-  <button id="reset">Reset</button>
-  <button id="theme">☀ Light</button>
+<div class="controls" data-h2v-hide>
+  <button onclick="location.reload()">↺ Reset</button>
+  <!-- theme swatches, debug toggles, etc. live in here too -->
 </div>
 ```
 
 During `h2v export`, h2v injects a stylesheet `[data-h2v-hide] { display: none !important; }`. The page itself doesn't need any CSS or JS for this to work — controls remain interactive when you open the file in a normal browser.
+
+**Conventions for the controls bar:**
+
+- **One container.** Put the Reset button, theme switcher, and any other dev affordances into a single `data-h2v-hide` element so they share placement and lifecycle. Two separate `data-h2v-hide` containers in the same animation is a code smell.
+- **Reset button.** Use the label `↺ Reset` (the U+21BA arrow + the word "Reset") and `location.reload()` as the click handler. This restarts every animation deterministically without per-animation state-management JS. The convention is established by the `demo/animations/` storyboard.
+- **Theme switcher.** When the animation declares `<meta name="h2v-themes">`, the switcher sits next to the Reset button in the same bar. See [Theme switcher pattern](#theme-switcher-pattern-in-page-ui) below for the behavior contract.
 
 ### `data-h2v-recording` — the advanced case
 
@@ -189,11 +195,68 @@ Optional. Declare available themes once; h2v can record one video per theme.
 - Theme names match `[a-zA-Z0-9_-]+`. `dark` / `light` are conventions, not reserved.
 - Pages without a `h2v-themes` meta are single-theme.
 
+### CSS-variable pattern (recommended for non-trivial palettes)
+
+For animations with more than two or three themed properties, declaring CSS variables on `:root` and overriding them per `[data-theme]` is more maintainable than restyling each rule:
+
+```css
+:root {
+  /* Default theme (first listed in <meta name="h2v-themes">). */
+  --bg: #0f0f0f; --surface: #1a1a1a;
+  --text: #ffffff; --accent: #056ff0;
+}
+[data-theme="light"] {
+  --bg: #ffffff; --surface: #f0f4f7;
+  --text: #0f0f0f; --accent: #056ff0;
+}
+[data-theme="vibrant"] {
+  --bg: #1a0033; --surface: #2d0a52;
+  --text: #fff8ff; --accent: #ff2eb8;
+}
+
+body { background: var(--bg); color: var(--text); }
+.card { background: var(--surface); }
+.cta  { background: var(--accent); }
+```
+
+Each rule that uses a themed value reads from a variable; the per-theme block only declares the variable values.
+
 ### Bundle equivalent
 
 ```html
 <!-- ===== ANIMATION_START id="hero" capture_duration="5s" themes="dark,light" ===== -->
 ```
+
+### Theme switcher pattern (in-page UI)
+
+Add a visual theme switcher on the page so you can preview each theme in a normal browser without invoking h2v. The switcher sits in the same `data-h2v-hide` controls bar as the Reset button (see [conventions for the controls bar](#data-h2v-hide--the-common-case) above). The storyboard in [`../demo/animations/`](../demo/animations/) shows the canonical implementation — circular gradient swatches in line with the Reset button.
+
+**Behavior contract:**
+
+1. **Click jumps directly to that theme.** No cycling through every theme to reach the one you want.
+2. **The default theme has no `data-theme` attribute** on `<html>`. Selecting the default calls `removeAttribute('data-theme')`. This mirrors `h2v export` so the local preview matches the recorded output exactly.
+3. **Non-default themes set `data-theme="<name>"`** — same as h2v's recording.
+4. **The active option is visually indicated** (use `aria-pressed="true"` and a CSS rule).
+5. **Wrap the whole switcher in `data-h2v-hide`** alongside the Reset button so h2v hides them during export but they stay interactive in any browser preview.
+6. **Disable theme-related CSS transitions during recording** if you have any. Add `html[data-h2v-recording] body { transition: none; }` so h2v captures the theme applied instantly at frame 0 instead of fading in from the default over the first frames. (Skip if your body has no `transition` on color/background.)
+
+**Visual is your call** as long as the behavior contract above holds. The storyboard's canonical look is gradient-filled circular swatches because they're compact enough to sit inline with a Reset button, but a vertical list of palette strips, labeled pills, a dropdown, or a named-button row are all valid implementations.
+
+**Minimal JS implementation:**
+
+```js
+const DEFAULT_THEME = 'dark';  // first entry in <meta name="h2v-themes">
+
+function applyTheme(target) {
+  if (target === DEFAULT_THEME) {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', target);
+  }
+}
+```
+
+Avoid the older binary `cycleTheme()` pattern that toggles between exactly two themes — it doesn't generalize to three or more, and it doesn't match how h2v records (which always sets the attribute deterministically per theme).
 
 Each animation in a bundle has its own theme list — they don't have to match.
 

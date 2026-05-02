@@ -25,7 +25,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; }
 .controls {
-  position: fixed; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 100;
+  position: fixed; top: 16px; right: 16px; display: flex; gap: 8px; align-items: center; z-index: 100;
 }
 .ctrl-btn {
   padding: 8px 16px; background: var(--surface); border: 1px solid var(--border);
@@ -33,6 +33,16 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
   font-family: monospace; transition: all 0.2s ease;
 }
 .ctrl-btn:hover { color: var(--text); border-color: var(--border2); }
+.swatch {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 2px solid transparent; padding: 0; cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.swatch:hover { transform: scale(1.1); }
+.swatch[aria-pressed="true"] { border-color: var(--text); transform: scale(1.1); }
+.swatch[data-theme-target="dark"]    { background: linear-gradient(135deg, #0f0f0f 0%, #056ff0 100%); }
+.swatch[data-theme-target="light"]   { background: linear-gradient(135deg, #ffffff 0%, #056ff0 100%); }
+.swatch[data-theme-target="vibrant"] { background: linear-gradient(135deg, #1a0033 0%, #ff2eb8 100%); }
 
 
   .container{display:flex;align-items:center;gap:32px}
@@ -59,7 +69,7 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
   .logic-text{font-family:monospace;font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:2px}
 
 </style><meta name="h2v-duration" content="6s"><meta name="h2v-themes" content="dark,light,vibrant"><meta name="h2v-viewport" content="1280x720"></head><body>
-<div class="controls" data-h2v-hide><button class="ctrl-btn" onclick="resetAnim()">↺ Reset</button><button class="ctrl-btn" onclick="startAnim()">▶ Start</button><button class="ctrl-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button></div>
+<div class="controls" data-h2v-hide><button class="ctrl-btn" onclick="location.reload()">↺ Reset</button><button class="swatch" data-theme-target="dark" aria-label="Dark" aria-pressed="true"></button><button class="swatch" data-theme-target="light" aria-label="Light" aria-pressed="false"></button><button class="swatch" data-theme-target="vibrant" aria-label="Vibrant" aria-pressed="false"></button></div>
 
 <div class="wrapper">
   <div class="container">
@@ -87,9 +97,9 @@ body { background: var(--bg); display: flex; align-items: center; justify-conten
 </div>
 
 <script>
-function toggleTheme(){const o=['dark','light','vibrant'];const c=document.documentElement.getAttribute('data-theme')||'dark';const n=o[(o.indexOf(c)+1)%o.length];document.documentElement.setAttribute('data-theme',n);const a=o[(o.indexOf(n)+1)%o.length];const l={dark:'🌙 Dark',light:'☀ Light',vibrant:'🎨 Vibrant'};document.getElementById('themeBtn').textContent=l[a]}
-function resetAnim(){location.reload()}
-function startAnim(){resetAnim()}
-window.addEventListener('message',function(e){if(e.data&&e.data.theme){document.documentElement.setAttribute('data-theme',e.data.theme)}});
+const DEFAULT_THEME='dark';
+function applyTheme(t){if(t===DEFAULT_THEME){document.documentElement.removeAttribute('data-theme')}else{document.documentElement.setAttribute('data-theme',t)}syncSwatches()}
+function syncSwatches(){const c=document.documentElement.getAttribute('data-theme')||DEFAULT_THEME;document.querySelectorAll('.swatch').forEach(b=>b.setAttribute('aria-pressed',b.getAttribute('data-theme-target')===c?'true':'false'))}
+document.querySelectorAll('.swatch').forEach(b=>b.addEventListener('click',()=>applyTheme(b.getAttribute('data-theme-target'))));
 
 </script></body></html>
