@@ -947,12 +947,33 @@ async function recordJob(browser, job, opts, capturesRoot) {
       deviceScaleFactor: opts.scale,
     });
 
-    // Inject the JS time-slowdown shim before any page script runs.
-    await page.evaluateOnNewDocument(`${SHIM_SOURCE}(${opts.slowdown});`);
-
+    // Inject the JS time-slowdown shim. Two paths because Puppeteer treats
+    // the two content-loading modes differently:
+    //
+    //   - For single-file (`page.goto`), the navigation creates a new
+    //     document and `evaluateOnNewDocument` fires the shim before any
+    //     page script runs. Standard pattern.
+    //
+    //   - For bundles (`page.setContent`), Puppeteer uses
+    //     `document.open(); document.write(html); document.close()` on the
+    //     existing about:blank — this is NOT a navigation, so
+    //     `evaluateOnNewDocument` never fires. Without intervention, the
+    //     bundle's scripts call the raw, un-shimmed `setTimeout` /
+    //     `performance.now` / `Date.now` / `requestAnimationFrame`, and
+    //     JS-driven animations run at full real-time speed (6× too fast,
+    //     since the capture loop is paced to slowdown × frame interval).
+    //     CSS is unaffected because `Animation.setPlaybackRate` is set
+    //     separately below.
+    //
+    //     Fix: inject the shim directly into the about:blank window via
+    //     `page.evaluate` before `setContent`. `document.write()` replaces
+    //     the document but not the window, so the shim's wrappers on
+    //     `window.setTimeout` etc. persist into the new content's scope.
     if (job.mode === 'bundle') {
+      await page.evaluate(`(${SHIM_SOURCE})(${opts.slowdown});`);
       await page.setContent(job.bundleHtml, { waitUntil: 'load' });
     } else {
+      await page.evaluateOnNewDocument(`${SHIM_SOURCE}(${opts.slowdown});`);
       await page.goto('file://' + job.inputPath, { waitUntil: 'load' });
     }
 
