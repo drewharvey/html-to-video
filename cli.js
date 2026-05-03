@@ -888,7 +888,10 @@ function printPlan(jobs, opts) {
 //    - `performance.now()` returns "real elapsed since page load" / S
 //    - `Date.now()` returns "page-load epoch + (real elapsed since page
 //       load) / S"
-//    - `requestAnimationFrame` callback timestamps are scaled the same way
+//    - `requestAnimationFrame` callback timestamps are slowed indirectly:
+//       Chrome reads the (overridden) `performance.now` when generating
+//       the timestamp argument, so wrapping rAF explicitly would
+//       double-slow it. See the SHIM_SOURCE comment below.
 //
 // 2. CSS animations and transitions are slowed via the CDP Animation
 //    domain: `Animation.setPlaybackRate({ playbackRate: 1 / S })`.
@@ -928,10 +931,17 @@ const SHIM_SOURCE = `(function(sf) {
   var rDate = Date.now.bind(Date);
   var dateStart = rDate();
   Date.now = function() { return dateStart + (rDate() - dateStart) / sf; };
-  var rRAF = window.requestAnimationFrame.bind(window);
-  window.requestAnimationFrame = function(cb) {
-    return rRAF(function(realTs) { cb((realTs - perfStart) / sf); });
-  };
+  // NOTE: requestAnimationFrame is intentionally NOT wrapped. Per the
+  // HTML5 spec, the timestamp passed to rAF callbacks "represents the
+  // current time, the same value that performance.now() would return."
+  // Chrome implements this by reading the live performance.now property
+  // when constructing the timestamp argument — so our Object.defineProperty
+  // override above already makes rAF callbacks receive slowed timestamps
+  // for free. A wrapper here would slow the timestamp a SECOND time
+  // (rAF receives slowed-by-sf, wrapper divides by sf again → sf² total).
+  // That bug shipped silently for animations using rAF instead of
+  // setTimeout/setInterval; canvas-driven animations were the most
+  // common victims.
 })`;
 
 // =========================================================================
