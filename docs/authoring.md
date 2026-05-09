@@ -281,11 +281,22 @@ Each animation in a bundle has its own theme list — they don't have to match.
 
 ## Recording with transparency (alpha channel)
 
-When the operator passes `h2v export --alpha`, h2v records a video with a real alpha channel — useful for compositing into video-editing software (After Effects, Premiere, DaVinci Resolve, Final Cut Pro). Output is ProRes 4444 in `.mov`, which every major NLE can drop on a timeline as an over-the-top layer.
+When the operator passes `h2v export --alpha`, h2v records a video with a real alpha channel — useful for compositing into video-editing software (CapCut, After Effects, Premiere, DaVinci Resolve, Final Cut Pro).
 
-For this to work, **the page must not paint an opaque `html` or `body` background**. h2v passes `omitBackground: true` to Chromium's screenshot, which exposes whatever the page paints — but if your stylesheet says `body { background: #0b0b0c }`, that paint is real and the recording will be opaque.
+### TL;DR
+
+```bash
+h2v export my-clip.html --alpha
+# → output/my-clip.mov  (PNG-in-MOV, lossless, transparent, ready to composite)
+```
+
+Drop the `.mov` onto a timeline. Alpha is auto-detected. Done.
+
+For an opaque `body` background that you want to keep in browser preview but drop during recording, use the `data-h2v-recording` pattern below.
 
 ### Authoring rule
+
+**The page must not paint an opaque `html` or `body` background.** h2v passes `omitBackground: true` to Chromium's screenshot, which exposes whatever the page paints — but if your stylesheet says `body { background: #0b0b0c }`, that paint is real and the recording will be opaque.
 
 Either omit `background` on `html`/`body` entirely, or declare it transparent:
 
@@ -295,7 +306,7 @@ html, body { background: transparent; }
 
 Element-level backgrounds (cards, panels, buttons, gradients on `<div>`s) are fine and recommended — those are the parts of your animation that *should* be opaque against the alpha-cleared canvas.
 
-### Optional: react to recording mode
+#### Optional: react to recording mode
 
 If your animation has an opaque background you want to keep when previewing in a browser but drop during alpha recording, gate it on `data-h2v-recording`:
 
@@ -306,48 +317,57 @@ html[data-h2v-recording] body { background: transparent; }  /* h2v export */
 
 `data-h2v-recording` is set by h2v on `<html>` after navigation during every export run (alpha or not). Combined with `--alpha`, this gives you a single source file that previews opaque locally and records with alpha for compositing.
 
-### What you get out
+### Codec options for `--alpha`
 
-A `.mov` file with `prores_ks` profile 4 (4444), pixel format `yuva444p10le` — 10-bit per channel including alpha. Drag it onto a video-editor timeline and the editor will detect the alpha channel automatically (no "interpret footage → straight alpha" toggle needed; ProRes 4444 marks alpha presence in the stream).
+Two codec choices, both produce `.mov` files with a real alpha channel:
 
-`--alpha` forces `--codec prores_ks`, `--container mov`, and `--capture-format png`. Passing any of those explicitly to a different value alongside `--alpha` is an error — h2v will tell you which combo it expects. The CLI flag reference: [`cli.md`](cli.md).
+#### Default: PNG-in-MOV (`--alpha`)
 
-### Expect large files — and how to shrink them
+```bash
+h2v export my-clip.html --alpha
+```
 
-ProRes 4444 is a mastering/intermediate codec, not a delivery codec. The bitrate is fixed at roughly `pixel-count × fps` Mbps, which makes it very large at h2v's defaults: a **1.5-second clip at 4K (`--scale 3`) 60 fps is ≈ 100 MB**. A 10-second clip at the same settings is roughly 670 MB. There's nothing wrong with these files — that's just what ProRes 4444 produces — but most compositing workflows don't need the full master.
+What you get: `.mov` file containing PNG-codec video. Bit-exact lossless. The PNG codec spec mandates straight alpha, so **every NLE and player interprets the alpha channel the same way** — no surprises across CapCut, Premiere, Resolve, FCP, AE, or web playback.
 
-**Recommended starting point for `--alpha` runs:**
+#### Opt-in: ProRes 4444 (`--alpha --codec prores_ks`)
+
+```bash
+h2v export my-clip.html --alpha --codec prores_ks
+```
+
+What you get: `.mov` file containing ProRes 4444 video (10-bit `yuva444p10le`). Industry-standard mastering codec for Apple-ecosystem pro workflows. **Larger files** (~5–10× bigger than PNG-in-MOV for h2v's content) and **alpha interpretation can vary across NLEs**: ffmpeg's ProRes 4444 output ships without an explicit alpha-mode metadata tag, so QuickTime/FCP guess correctly while CapCut and some web editors guess premultiplied — semi-transparent regions (glows, shadows, fades) appear as bright halos instead of soft falloff. Use ProRes 4444 only if your colour-managed pipeline specifically expects it.
+
+#### Quick comparison
+
+| | PNG-in-MOV (default) | ProRes 4444 (opt-in) |
+|---|---|---|
+| File size (1.5 s, 4K 60 fps) | ~16 MB | ~100 MB |
+| Quality | bit-exact lossless | 10-bit, lossy but very high |
+| Alpha interpretation | universal (straight) | varies by player |
+| CapCut / web editors | ✓ correct | ✗ glow blow-out |
+| Premiere / Resolve | ✓ correct | usually correct |
+| QuickTime / FCP | ✓ correct (decode-only player support varies) | ✓ correct |
+| When to pick it | almost always | colour-managed Apple pipeline |
+
+### What's in the output file
+
+For PNG-in-MOV: a `.mov` container with one video stream tagged `png` codec, `pix_fmt rgba` (8 bits per channel including alpha). Frame data is per-frame zlib-compressed PNG.
+
+For ProRes 4444: a `.mov` container with one video stream tagged `prores_ks` profile 4, `pix_fmt yuva444p10le` (10 bits per channel including alpha), `-vendor apl0` for NLE compatibility.
+
+Both force `--container mov` and `--capture-format png`. Passing any of these explicitly to an incompatible value alongside `--alpha` is an error. The CLI flag reference: [`cli.md`](cli.md).
+
+### Don't need 4K? Smaller files via `--scale` and `--fps`
+
+PNG-in-MOV scales linearly with `pixel-count × fps`. Most compositing timelines are 1080p–1440p, not 4K. A typical good starting point:
 
 ```bash
 h2v export my-clip.html --alpha --scale 2 --fps 30
 ```
 
-This drops 4K → 1440p and halves the framerate, producing **~25 MB** for the same 1.5 s clip — about 4× smaller, with no perceptible quality difference once the file lands on a 1080p–1440p timeline (which is what most NLEs are configured for).
+That cuts a ~16 MB clip to ~4 MB with no visible difference once it lands on a 1080p timeline. `--scale 1` (720p) drops further to ~1 MB. Both `--scale` and `--fps` are linear knobs; `--scale` is the bigger lever (quadratic in pixel count).
 
-Measured trade-off (`tests/alpha-test.html`, 1.5 s):
-
-| `--scale` | `--fps` | Output | vs. defaults |
-|---|---|---|---|
-| 3 (4K, default) | 60 (default) | ~100 MB | 1× |
-| 3 (4K) | 30 | ~49 MB | 2.1× smaller |
-| 3 (4K) | 24 | ~39 MB | 2.6× smaller |
-| **2 (1440p)** | **30** | **~25 MB** | **4× smaller** ← sweet spot |
-| 2 (1440p) | 60 | ~52 MB | 1.9× smaller |
-| 1 (720p) | 60 | ~17 MB | 6× smaller |
-| 1 (720p) | 30 | ~9 MB | 11× smaller |
-
-Both `--scale` and `--fps` reduce file size linearly; `--scale` is the bigger lever (it's a quadratic in pixel count). Pick whichever combination matches the timeline you're compositing onto.
-
-For dramatic post-process compression (5–15% of the ProRes size, no compositing-quality loss), re-encode to HEVC-with-alpha on macOS:
-
-```bash
-ffmpeg -i output/my-clip.mov \
-  -c:v hevc_videotoolbox -allow_sw 1 -alpha_quality 0.75 \
-  -tag:v hvc1 -pix_fmt bgra \
-  output/my-clip-hevc.mov
-```
-
-Final Cut, Motion, and recent Premiere/After Effects accept these natively.
+For ProRes 4444 the same scaling applies, but starting from a much larger baseline — `--scale 2 --fps 30` brings a ~100 MB clip down to ~25 MB.
 
 ### What `--alpha` does NOT do
 

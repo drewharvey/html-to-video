@@ -32,23 +32,27 @@ const DEFAULTS = {
 const CAPTURE_FORMATS = new Set(['jpeg', 'png']);
 const CAPTURE_EXT_FOR_FORMAT = { jpeg: 'jpg', png: 'png' };
 
-const VIDEO_CODECS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'prores_ks']);
+const VIDEO_CODECS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'prores_ks', 'png']);
 const VIDEO_CONTAINERS = new Set(['mp4', 'mov', 'webm']);
 
 // Default container per codec, plus the full set of containers each
 // codec is allowed to land in. ProRes outside .mov breaks most NLEs;
-// VP9 outside .webm is fragile across players. Keep the matrix tight.
+// VP9 outside .webm is fragile across players. PNG-in-MOV is QuickTime's
+// canonical lossless-with-alpha format; png in mp4 or webm would be
+// unusual and not what users want, so keep it mov-only too.
 const DEFAULT_CONTAINER_FOR_CODEC = {
   libx264: 'mp4',
   libx265: 'mp4',
   'libvpx-vp9': 'webm',
   prores_ks: 'mov',
+  png: 'mov',
 };
 const ALLOWED_CONTAINERS_FOR_CODEC = {
   libx264: new Set(['mp4', 'mov']),
   libx265: new Set(['mp4', 'mov']),
   'libvpx-vp9': new Set(['webm']),
   prores_ks: new Set(['mov']),
+  png: new Set(['mov']),
 };
 
 // Quality presets bundle codec, capture-format, capture-quality, and CRF
@@ -170,10 +174,12 @@ EXPORT FLAGS
                       prores_ks (uses a fixed profile instead). Default
                       depends on --quality-preset.
   --codec <name>      Video encoder. One of: libx264, libx265,
-                      libvpx-vp9, prores_ks. h264 is the universal default;
-                      h265 gives ~30% smaller files; vp9 targets web
-                      delivery; prores_ks produces editing-friendly masters.
-                      Default depends on --quality-preset.
+                      libvpx-vp9, prores_ks, png. h264 is the universal
+                      default; h265 gives ~30% smaller files; vp9 targets
+                      web delivery; prores_ks produces editing-friendly
+                      masters; png is lossless PNG-in-MOV (used by --alpha
+                      and useful as a no-CRF lossless intermediate).
+                      Default depends on --quality-preset and --alpha.
   --container <ext>   Output container: mp4, mov, or webm. Auto-derived
                       from --codec when omitted (h264/h265 → mp4, vp9 →
                       webm, prores → mov). Set explicitly to override
@@ -187,19 +193,28 @@ EXPORT FLAGS
   --capture-quality <N>
                       JPEG quality 1-100 (default: ${DEFAULTS.captureQuality}). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
-  --alpha             Record with a transparent background. Output is
-                      ProRes 4444 (yuva444p10le) in .mov, suitable for
-                      compositing in NLEs (Premiere, Resolve, FCP, AE).
-                      Forces --codec prores_ks and --capture-format png;
-                      errors if either is set to something incompatible.
-                      The page must not paint an opaque html/body
-                      background — see docs/authoring.md.
+  --alpha             Record with a transparent background. The page
+                      must not paint an opaque html/body background —
+                      see docs/authoring.md. Two codec options:
 
-                      Expect large files: ProRes 4444 is a master format,
-                      not a delivery format (~100 MB per 1.5s at 4K
-                      60fps). For most NLE compositing work, start with
-                      --alpha --scale 2 --fps 30 (~4× smaller, no
-                      visible quality difference on a 1080p timeline).
+                        --alpha                       (default)
+                            PNG-in-MOV. Bit-exact lossless. Straight
+                            alpha that every NLE/player interprets
+                            identically (CapCut, Premiere, Resolve, FCP,
+                            AE, web). ~6× smaller than ProRes 4444.
+                            Recommended for almost everyone.
+
+                        --alpha --codec prores_ks
+                            ProRes 4444 (yuva444p10le). 10-bit chroma.
+                            Larger files. Alpha metadata is ambiguous
+                            in ffmpeg's output — QuickTime/FCP render
+                            correctly, but CapCut and some web editors
+                            blow out semi-transparent regions. Use only
+                            if your pipeline specifically expects
+                            ProRes 4444.
+
+                      Both force --capture-format png. Errors if any
+                      conflicting flag is set explicitly.
   --slowdown <N>      Real-time slowdown factor (default: ${DEFAULTS.slowdown}). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting video plays back at original speed.
@@ -500,20 +515,27 @@ function resolveExportOpts(opts) {
   // capture format. Resolve it before the codec/container compatibility
   // check below so its overrides participate in that validation.
   //
-  // Currently only prores_ks (→ .mov) supports alpha reliably end-to-end:
-  //   - libx264/libx265 have no alpha encoder.
-  //   - libvpx-vp9 advertises yuva420p but ffmpeg's wrapper silently drops
-  //     the alpha plane in the standard invocation (verified). Achievable
-  //     via a multi-stream remux but fragile across ffmpeg versions; not
-  //     worth shipping until that's stabilised.
-  // When we add a second working route, expand this to a Set check.
+  // Default alpha codec is `png` (PNG-in-MOV): bit-exact lossless, ~6×
+  // smaller files than ProRes 4444, and crucially the PNG codec spec
+  // mandates straight alpha so every player (CapCut, Resolve, Premiere,
+  // FCP, AE, web) interprets the alpha channel identically. ProRes 4444
+  // from ffmpeg ships ambiguous alpha-mode metadata — players guess, and
+  // some (CapCut) guess premultiplied, blowing out semi-transparent
+  // glows/shadows into bright halos against the intended soft falloff.
+  //
+  // `prores_ks` remains opt-in for Apple colour-managed workflows or
+  // pipelines that specifically demand 10-bit chroma. Other codecs are
+  // rejected: libx264/libx265 have no alpha; libvpx-vp9 silently drops
+  // the alpha plane in ffmpeg's single-call invocation (verified). qtrle
+  // would also work end-to-end but doesn't add anything over PNG-in-MOV
+  // for h2v's content.
   if (opts.alpha) {
     if (!opts.codecExplicit) {
-      opts.codec = 'prores_ks';
-    } else if (opts.codec !== 'prores_ks') {
+      opts.codec = 'png';
+    } else if (opts.codec !== 'png' && opts.codec !== 'prores_ks') {
       console.error(
-        `error: --alpha is only supported with --codec prores_ks ` +
-        `(got --codec ${opts.codec}). Omit --codec to let --alpha pick it.`
+        `error: --alpha supports --codec png (default) or --codec prores_ks ` +
+        `(got --codec ${opts.codec}). Omit --codec to use the default.`
       );
       process.exit(2);
     }
@@ -1168,6 +1190,19 @@ function buildEncodeArgs(opts) {
         '-b:v', '0',
         '-deadline', deadline,
         '-cpu-used', cpuUsed,
+      ];
+    }
+    case 'png': {
+      // PNG codec inside MOV: bit-exact lossless per-frame zlib + filter
+      // compression. PNG's storage format is straight-alpha by spec, so
+      // every NLE/player interprets the alpha plane identically — no
+      // ambiguous metadata like ProRes 4444 has. Pix_fmt rgba when alpha
+      // is on, rgb24 otherwise; both are lossless. PNG codec has no
+      // quality knobs — --crf and --quality-preset are ignored.
+      const pixFmt = opts.alpha ? 'rgba' : 'rgb24';
+      return [
+        '-c:v', 'png',
+        '-pix_fmt', pixFmt,
       ];
     }
     case 'prores_ks': {
@@ -1897,12 +1932,17 @@ async function main() {
     ? 'png'
     : `jpeg q=${opts.captureQuality}`;
   const tier = opts.qualityPreset;
-  // --alpha forces profile 4 (4444) regardless of tier; show that in the
-  // summary so the log doesn't claim profile 3 when alpha is on.
-  const proresProfile = (opts.alpha || tier === 'max') ? '4 (4444)' : '3 (HQ)';
-  const codecDesc = opts.codec === 'prores_ks'
-    ? `${opts.codec} profile ${proresProfile}${opts.alpha ? ' + alpha' : ''}`
-    : `${opts.codec} crf ${opts.crf}`;
+  // --alpha forces ProRes profile 4 (4444) regardless of tier; show that
+  // in the summary so the log doesn't claim profile 3 when alpha is on.
+  let codecDesc;
+  if (opts.codec === 'prores_ks') {
+    const proresProfile = (opts.alpha || tier === 'max') ? '4 (4444)' : '3 (HQ)';
+    codecDesc = `${opts.codec} profile ${proresProfile}${opts.alpha ? ' + alpha' : ''}`;
+  } else if (opts.codec === 'png') {
+    codecDesc = `${opts.codec} (lossless${opts.alpha ? ' + alpha' : ''})`;
+  } else {
+    codecDesc = `${opts.codec} crf ${opts.crf}`;
+  }
   // Resolution summary differs when jobs have mixed viewports (per-animation
   // h2v-viewport metas / bundle attributes vary). Per-job rows in the plan
   // carry the precise sizes; this line summarizes.

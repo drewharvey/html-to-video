@@ -42,10 +42,10 @@ h2v export tests/alpha-test.html --alpha --width 640 --height 360 --scale 1
 Verify the output has alpha:
 
 ```
-ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,profile,pix_fmt -of default=nw=1 output/alpha-test.mov
+ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,pix_fmt -of default=nw=1 output/alpha-test.mov
 ```
 
-Expect `codec_name=prores`, `profile=4444`, `pix_fmt=yuva444p10le` (ffmpeg may report `yuva444p12le` since ProRes 4444 is internally 12-bit; both are correct).
+Expect `codec_name=png`, `pix_fmt=rgba` (PNG-in-MOV, the `--alpha` default). For the ProRes 4444 opt-in (`--alpha --codec prores_ks`), expect `codec_name=prores`, `pix_fmt=yuva444p12le` instead.
 
 To assert pixel-level transparency, extract a mid-clip frame as 8-bit RGBA and sample the alpha plane:
 

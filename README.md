@@ -29,8 +29,9 @@ h2v export animation.html                 # one file
 h2v export bundle.html                    # bundles auto-detected
 h2v export ./anims --concurrency 8        # parallel batch
 h2v export --quality-preset high          # higher-fidelity tier
-h2v export --alpha                        # transparent ProRes 4444 .mov
-                                          # for compositing in NLEs
+h2v export --alpha                        # transparent .mov (PNG-in-MOV,
+                                          # lossless, drops onto any NLE)
+h2v export --alpha --codec prores_ks      # opt into ProRes 4444 instead
 h2v export --theme all                    # one video per declared theme
 h2v export --dry-run                      # print plan, no recording
 

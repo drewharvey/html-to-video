@@ -70,10 +70,12 @@ EXPORT FLAGS
                       prores_ks (uses a fixed profile instead). Default
                       depends on --quality-preset.
   --codec <name>      Video encoder. One of: libx264, libx265,
-                      libvpx-vp9, prores_ks. h264 is the universal default;
-                      h265 gives ~30% smaller files; vp9 targets web
-                      delivery; prores_ks produces editing-friendly masters.
-                      Default depends on --quality-preset.
+                      libvpx-vp9, prores_ks, png. h264 is the universal
+                      default; h265 gives ~30% smaller files; vp9 targets
+                      web delivery; prores_ks produces editing-friendly
+                      masters; png is lossless PNG-in-MOV (used by --alpha
+                      and useful as a no-CRF lossless intermediate).
+                      Default depends on --quality-preset and --alpha.
   --container <ext>   Output container: mp4, mov, or webm. Auto-derived
                       from --codec when omitted (h264/h265 → mp4, vp9 →
                       webm, prores → mov). Set explicitly to override
@@ -87,19 +89,28 @@ EXPORT FLAGS
   --capture-quality <N>
                       JPEG quality 1-100 (default: 95). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
-  --alpha             Record with a transparent background. Output is
-                      ProRes 4444 (yuva444p10le) in .mov, suitable for
-                      compositing in NLEs (Premiere, Resolve, FCP, AE).
-                      Forces --codec prores_ks and --capture-format png;
-                      errors if either is set to something incompatible.
-                      The page must not paint an opaque html/body
-                      background — see docs/authoring.md.
+  --alpha             Record with a transparent background. The page
+                      must not paint an opaque html/body background —
+                      see docs/authoring.md. Two codec options:
 
-                      Expect large files: ProRes 4444 is a master format,
-                      not a delivery format (~100 MB per 1.5s at 4K
-                      60fps). For most NLE compositing work, start with
-                      --alpha --scale 2 --fps 30 (~4× smaller, no
-                      visible quality difference on a 1080p timeline).
+                        --alpha                       (default)
+                            PNG-in-MOV. Bit-exact lossless. Straight
+                            alpha that every NLE/player interprets
+                            identically (CapCut, Premiere, Resolve, FCP,
+                            AE, web). ~6× smaller than ProRes 4444.
+                            Recommended for almost everyone.
+
+                        --alpha --codec prores_ks
+                            ProRes 4444 (yuva444p10le). 10-bit chroma.
+                            Larger files. Alpha metadata is ambiguous
+                            in ffmpeg's output — QuickTime/FCP render
+                            correctly, but CapCut and some web editors
+                            blow out semi-transparent regions. Use only
+                            if your pipeline specifically expects
+                            ProRes 4444.
+
+                      Both force --capture-format png. Errors if any
+                      conflicting flag is set explicitly.
   --slowdown <N>      Real-time slowdown factor (default: 6). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting video plays back at original speed.
