@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="h2v-duration" content="1.5s">
+<style>
+  /* Transparent body — the whole point of this fixture. h2v's --alpha
+     flag passes omitBackground:true to the screenshot, which exposes the
+     page's transparency. If you set body{background:#000} this fixture
+     produces an opaque black .mov. */
+  html, body { margin: 0; padding: 0; background: transparent; }
+
+  body {
+    height: 100vh;
+    display: grid;
+    place-items: center;
+    /* No font import; system stack so the test is offline-clean. */
+    font: 700 64px system-ui, -apple-system, sans-serif;
+  }
+
+  /* The visible content: pink text fading in. The text itself is opaque
+     (full alpha by frame 30), but the area around it should remain
+     fully transparent (alpha = 0) in every frame. */
+  h1 {
+    color: #ff3e9c;
+    margin: 0;
+    opacity: 0;
+    animation: fade 1.2s linear forwards;
+    text-shadow: 0 4px 24px rgba(255, 62, 156, 0.5);
+  }
+  @keyframes fade { to { opacity: 1; } }
+</style>
+</head>
+<body>
+  <h1>alpha</h1>
+</body>
+</html>

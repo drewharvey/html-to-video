@@ -279,6 +279,84 @@ Each animation in a bundle has its own theme list — they don't have to match.
 
 ---
 
+## Recording with transparency (alpha channel)
+
+When the operator passes `h2v export --alpha`, h2v records a video with a real alpha channel — useful for compositing into video-editing software (After Effects, Premiere, DaVinci Resolve, Final Cut Pro). Output is ProRes 4444 in `.mov`, which every major NLE can drop on a timeline as an over-the-top layer.
+
+For this to work, **the page must not paint an opaque `html` or `body` background**. h2v passes `omitBackground: true` to Chromium's screenshot, which exposes whatever the page paints — but if your stylesheet says `body { background: #0b0b0c }`, that paint is real and the recording will be opaque.
+
+### Authoring rule
+
+Either omit `background` on `html`/`body` entirely, or declare it transparent:
+
+```css
+html, body { background: transparent; }
+```
+
+Element-level backgrounds (cards, panels, buttons, gradients on `<div>`s) are fine and recommended — those are the parts of your animation that *should* be opaque against the alpha-cleared canvas.
+
+### Optional: react to recording mode
+
+If your animation has an opaque background you want to keep when previewing in a browser but drop during alpha recording, gate it on `data-h2v-recording`:
+
+```css
+body { background: #0b0b0c; }                  /* Local preview */
+html[data-h2v-recording] body { background: transparent; }  /* h2v export */
+```
+
+`data-h2v-recording` is set by h2v on `<html>` after navigation during every export run (alpha or not). Combined with `--alpha`, this gives you a single source file that previews opaque locally and records with alpha for compositing.
+
+### What you get out
+
+A `.mov` file with `prores_ks` profile 4 (4444), pixel format `yuva444p10le` — 10-bit per channel including alpha. Drag it onto a video-editor timeline and the editor will detect the alpha channel automatically (no "interpret footage → straight alpha" toggle needed; ProRes 4444 marks alpha presence in the stream).
+
+`--alpha` forces `--codec prores_ks`, `--container mov`, and `--capture-format png`. Passing any of those explicitly to a different value alongside `--alpha` is an error — h2v will tell you which combo it expects. The CLI flag reference: [`cli.md`](cli.md).
+
+### Expect large files — and how to shrink them
+
+ProRes 4444 is a mastering/intermediate codec, not a delivery codec. The bitrate is fixed at roughly `pixel-count × fps` Mbps, which makes it very large at h2v's defaults: a **1.5-second clip at 4K (`--scale 3`) 60 fps is ≈ 100 MB**. A 10-second clip at the same settings is roughly 670 MB. There's nothing wrong with these files — that's just what ProRes 4444 produces — but most compositing workflows don't need the full master.
+
+**Recommended starting point for `--alpha` runs:**
+
+```bash
+h2v export my-clip.html --alpha --scale 2 --fps 30
+```
+
+This drops 4K → 1440p and halves the framerate, producing **~25 MB** for the same 1.5 s clip — about 4× smaller, with no perceptible quality difference once the file lands on a 1080p–1440p timeline (which is what most NLEs are configured for).
+
+Measured trade-off (`tests/alpha-test.html`, 1.5 s):
+
+| `--scale` | `--fps` | Output | vs. defaults |
+|---|---|---|---|
+| 3 (4K, default) | 60 (default) | ~100 MB | 1× |
+| 3 (4K) | 30 | ~49 MB | 2.1× smaller |
+| 3 (4K) | 24 | ~39 MB | 2.6× smaller |
+| **2 (1440p)** | **30** | **~25 MB** | **4× smaller** ← sweet spot |
+| 2 (1440p) | 60 | ~52 MB | 1.9× smaller |
+| 1 (720p) | 60 | ~17 MB | 6× smaller |
+| 1 (720p) | 30 | ~9 MB | 11× smaller |
+
+Both `--scale` and `--fps` reduce file size linearly; `--scale` is the bigger lever (it's a quadratic in pixel count). Pick whichever combination matches the timeline you're compositing onto.
+
+For dramatic post-process compression (5–15% of the ProRes size, no compositing-quality loss), re-encode to HEVC-with-alpha on macOS:
+
+```bash
+ffmpeg -i output/my-clip.mov \
+  -c:v hevc_videotoolbox -allow_sw 1 -alpha_quality 0.75 \
+  -tag:v hvc1 -pix_fmt bgra \
+  output/my-clip-hevc.mov
+```
+
+Final Cut, Motion, and recent Premiere/After Effects accept these natively.
+
+### What `--alpha` does NOT do
+
+- It does not recolour or remap your existing pixels — what you see on the page is what gets recorded, just with a transparent canvas instead of Chromium's default white.
+- It does not add anti-aliasing or "matte" handling at element edges. Element edges with text-shadow or box-shadow render correctly with semi-transparent alpha falling off into transparency, which is what you want for compositing.
+- It does not currently support h264, h265, or VP9 — see [internals.md](internals.md) for why those routes were dismissed.
+
+---
+
 ## Suggested prompt for AI generation
 
 When asking an LLM to generate an animation for h2v, include something like:

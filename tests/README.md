@@ -29,6 +29,36 @@ ffmpeg -y -i output/sync-test.mp4 -ss 1.0 -frames:v 1 late.png
 
 If the green and blue bars are different widths at the same moment, the recorder broke.
 
+## alpha-test.html
+
+A 1.5-second fixture for verifying that `h2v export --alpha` produces a video with a real per-pixel alpha channel. Pink "alpha" text fades in over a transparent body. Use this fixture (not `sync-test.html`) when validating the alpha pipeline — `sync-test.html`'s body has no explicit transparency rule so corner pixels can pick up Chromium defaults.
+
+### Usage
+
+```
+h2v export tests/alpha-test.html --alpha --width 640 --height 360 --scale 1
+```
+
+Verify the output has alpha:
+
+```
+ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,profile,pix_fmt -of default=nw=1 output/alpha-test.mov
+```
+
+Expect `codec_name=prores`, `profile=4444`, `pix_fmt=yuva444p10le` (ffmpeg may report `yuva444p12le` since ProRes 4444 is internally 12-bit; both are correct).
+
+To assert pixel-level transparency, extract a mid-clip frame as 8-bit RGBA and sample the alpha plane:
+
+```
+ffmpeg -y -i output/alpha-test.mov -ss 0.7 -frames:v 1 -pix_fmt rgba -update 1 mid.png
+ffmpeg -i mid.png -filter_complex "extractplanes=a" -frames:v 1 -f rawvideo - | \
+  python3 -c "import sys; b=sys.stdin.buffer.read(); print(f'min={min(b)} max={max(b)} transparent={sum(1 for x in b if x==0)}/{len(b)}')"
+```
+
+Expect `min=0` (transparent regions exist) and a non-trivial transparent-pixel count (the area around the text). At t=0.7 s the text is mid-fade, so `max` will be partial (~150–200, not 255).
+
+If the alpha plane is uniformly 255 anywhere a transparent region should exist, either the page is painting an opaque background or `omitBackground` isn't being passed through to the screenshot.
+
 ## bench-screenshot.js
 
 Benchmarks puppeteer screenshot speed at 4K across image formats (PNG, JPEG, WebP) and option combinations (`optimizeForSpeed`, `captureBeyondViewport`). Useful when revisiting the capture-format choice or checking a different host's screenshot p95 (which is what bounds how low `--slowdown` can safely go).

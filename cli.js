@@ -187,6 +187,19 @@ EXPORT FLAGS
   --capture-quality <N>
                       JPEG quality 1-100 (default: ${DEFAULTS.captureQuality}). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
+  --alpha             Record with a transparent background. Output is
+                      ProRes 4444 (yuva444p10le) in .mov, suitable for
+                      compositing in NLEs (Premiere, Resolve, FCP, AE).
+                      Forces --codec prores_ks and --capture-format png;
+                      errors if either is set to something incompatible.
+                      The page must not paint an opaque html/body
+                      background — see docs/authoring.md.
+
+                      Expect large files: ProRes 4444 is a master format,
+                      not a delivery format (~100 MB per 1.5s at 4K
+                      60fps). For most NLE compositing work, start with
+                      --alpha --scale 2 --fps 30 (~4× smaller, no
+                      visible quality difference on a 1080p timeline).
   --slowdown <N>      Real-time slowdown factor (default: ${DEFAULTS.slowdown}). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting video plays back at original speed.
@@ -321,6 +334,7 @@ function parseArgs(argv) {
     heightExplicit: false,
     container: null,
     qualityPreset: 'standard',
+    alpha: false,
     skipFfmpeg: false,
     dryRun: false,
     skipOpen: false,
@@ -375,6 +389,7 @@ function parseArgs(argv) {
     }
     else if (a === '--container') opts.container = parseContainer(requireValue('--container'));
     else if (a === '--quality-preset') opts.qualityPreset = parseQualityPreset(requireValue('--quality-preset'));
+    else if (a === '--alpha') opts.alpha = true;
     else if (a === '--no-ffmpeg') opts.skipFfmpeg = true;
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--no-open') opts.skipOpen = true;
@@ -479,6 +494,38 @@ function resolveExportOpts(opts) {
   }
   if (!opts.crfExplicit && preset.crf != null) {
     opts.crf = preset.crf;
+  }
+
+  // --alpha is a cross-cutting flag that constrains codec, container, and
+  // capture format. Resolve it before the codec/container compatibility
+  // check below so its overrides participate in that validation.
+  //
+  // Currently only prores_ks (→ .mov) supports alpha reliably end-to-end:
+  //   - libx264/libx265 have no alpha encoder.
+  //   - libvpx-vp9 advertises yuva420p but ffmpeg's wrapper silently drops
+  //     the alpha plane in the standard invocation (verified). Achievable
+  //     via a multi-stream remux but fragile across ffmpeg versions; not
+  //     worth shipping until that's stabilised.
+  // When we add a second working route, expand this to a Set check.
+  if (opts.alpha) {
+    if (!opts.codecExplicit) {
+      opts.codec = 'prores_ks';
+    } else if (opts.codec !== 'prores_ks') {
+      console.error(
+        `error: --alpha is only supported with --codec prores_ks ` +
+        `(got --codec ${opts.codec}). Omit --codec to let --alpha pick it.`
+      );
+      process.exit(2);
+    }
+    if (!opts.captureFormatExplicit) {
+      opts.captureFormat = 'png';
+    } else if (opts.captureFormat !== 'png') {
+      console.error(
+        'error: --alpha requires --capture-format png ' +
+        '(JPEG cannot carry an alpha channel). Omit --capture-format to let --alpha pick it.'
+      );
+      process.exit(2);
+    }
   }
 
   if (opts.captureFormat === 'png' && opts.captureQualityExplicit) {
@@ -1016,8 +1063,13 @@ async function recordJob(browser, job, opts, capturesRoot) {
     fs.mkdirSync(captureDir, { recursive: true });
 
     const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
+    // omitBackground tells Chromium to skip painting its default white
+    // viewport background, exposing the page's own background-color (or
+    // transparency, if the page sets none / declares it transparent).
+    // Only meaningful with PNG capture — JPEG has no alpha channel.
+    // resolveExportOpts already enforces the format=png pairing.
     const screenshotOpts = opts.captureFormat === 'png'
-      ? { type: 'png' }
+      ? { type: 'png', omitBackground: opts.alpha }
       : { type: 'jpeg', quality: opts.captureQuality };
 
     // Pace screenshots at S × frame-interval real ms.
@@ -1123,6 +1175,20 @@ function buildEncodeArgs(opts) {
       // HQ (10-bit 4:2:2) for everything else — the editing-friendly
       // default. -vendor apl0 marks the file as Apple-vendor ProRes,
       // which some pickier NLEs require. ProRes ignores --crf entirely.
+      //
+      // Alpha override: --alpha forces profile 4 + yuva444p10le (4444 is
+      // the only ProRes profile with an alpha plane) and -vendor apl0,
+      // regardless of the active --quality-preset tier. resolveExportOpts
+      // guarantees opts.codec === 'prores_ks' and container === 'mov'
+      // when opts.alpha is set.
+      if (opts.alpha) {
+        return [
+          '-c:v', 'prores_ks',
+          '-profile:v', '4',
+          '-pix_fmt', 'yuva444p10le',
+          '-vendor', 'apl0',
+        ];
+      }
       const profile = tier === 'max' ? '4' : '3';
       const pixFmt = tier === 'max' ? 'yuv444p10le' : 'yuv422p10le';
       const vendor = tier === 'max' ? ['-vendor', 'apl0'] : [];
@@ -1831,9 +1897,11 @@ async function main() {
     ? 'png'
     : `jpeg q=${opts.captureQuality}`;
   const tier = opts.qualityPreset;
-  const proresProfile = tier === 'max' ? '4 (4444)' : '3 (HQ)';
+  // --alpha forces profile 4 (4444) regardless of tier; show that in the
+  // summary so the log doesn't claim profile 3 when alpha is on.
+  const proresProfile = (opts.alpha || tier === 'max') ? '4 (4444)' : '3 (HQ)';
   const codecDesc = opts.codec === 'prores_ks'
-    ? `${opts.codec} profile ${proresProfile}`
+    ? `${opts.codec} profile ${proresProfile}${opts.alpha ? ' + alpha' : ''}`
     : `${opts.codec} crf ${opts.crf}`;
   // Resolution summary differs when jobs have mixed viewports (per-animation
   // h2v-viewport metas / bundle attributes vary). Per-job rows in the plan

@@ -87,6 +87,19 @@ EXPORT FLAGS
   --capture-quality <N>
                       JPEG quality 1-100 (default: 95). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
+  --alpha             Record with a transparent background. Output is
+                      ProRes 4444 (yuva444p10le) in .mov, suitable for
+                      compositing in NLEs (Premiere, Resolve, FCP, AE).
+                      Forces --codec prores_ks and --capture-format png;
+                      errors if either is set to something incompatible.
+                      The page must not paint an opaque html/body
+                      background — see docs/authoring.md.
+
+                      Expect large files: ProRes 4444 is a master format,
+                      not a delivery format (~100 MB per 1.5s at 4K
+                      60fps). For most NLE compositing work, start with
+                      --alpha --scale 2 --fps 30 (~4× smaller, no
+                      visible quality difference on a 1080p timeline).
   --slowdown <N>      Real-time slowdown factor (default: 6). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting video plays back at original speed.

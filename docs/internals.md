@@ -111,6 +111,37 @@ After encoding, `./captures/` is wiped on exit (success or failure) — unless `
 
 ---
 
+## Alpha-channel recording
+
+The `--alpha` flag produces a video with a real per-pixel alpha channel, suitable for compositing in NLEs. Three things happen together when the flag is set:
+
+1. **Capture format forced to PNG.** JPEG has no alpha channel; PNG does.
+2. **`omitBackground: true` passed to `Page.captureScreenshot`.** Chromium normally paints a white viewport before rendering page content; `omitBackground` skips that paint, exposing whatever the page itself paints (or transparency, where the page paints nothing).
+3. **Encoder forced to `prores_ks` profile 4 with pix_fmt `yuva444p10le` in `.mov`.** ProRes 4444 is the only ProRes profile with an alpha plane.
+
+These three are coupled — `--alpha` rejects explicit `--codec`/`--container`/`--capture-format` flags that would break any of them.
+
+### Why ProRes 4444 only
+
+Other alpha-capable codec/container combinations were investigated and dismissed:
+
+| Codec | Container | Verdict |
+|---|---|---|
+| libx264 | mp4/mov | No alpha encoder. |
+| libx265 | mp4/mov | Spec supports alpha; libx265 doesn't expose it portably. |
+| libvpx-vp9 | webm | Encoder advertises `yuva420p` but ffmpeg's wrapper silently drops the alpha plane in the simple invocation. Achievable via multi-stream remux but fragile across ffmpeg versions; deferred. |
+| hevc_videotoolbox | mp4/mov | macOS-only encoder; non-portable. |
+| qtrle | mov | Works, lossless, but file sizes 5–20× ProRes 4444 for no quality gain. Could be added later as an "uncompressed alpha" tier. |
+| png | mov | Bit-exact alpha but huge files. Same disposition as qtrle. |
+
+ProRes 4444 hits the sweet spot: every NLE that pros use accepts it natively; alpha is reliably preserved end-to-end through libavformat; file sizes are large but reasonable for editing intermediates.
+
+### Authoring caveat
+
+`omitBackground` only exposes the page's own paint. If the page sets an opaque `body { background: ... }`, the recording is opaque. The authoring rule (`html, body { background: transparent }` or no `background` at all) is documented in [`authoring.md`](authoring.md). h2v doesn't inject a stylesheet to enforce this — pages with intentional backgrounds for non-alpha runs would be surprised by it.
+
+---
+
 ## Code shape
 
 ```
