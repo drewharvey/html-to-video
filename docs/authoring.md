@@ -292,6 +292,8 @@ h2v export my-clip.html --alpha
 
 Drop the `.mov` onto a timeline. Alpha is auto-detected. Done.
 
+> **Note on framerate:** `--alpha` records at 30 fps by default (alpha codecs are much larger per-frame than h264, and 60 fps doubles file size for no compositing-quality gain). Pass `--fps 60` explicitly if you need it.
+
 For an opaque `body` background that you want to keep in browser preview but drop during recording, use the `data-h2v-recording` pattern below.
 
 ### Authoring rule
@@ -341,7 +343,8 @@ What you get: `.mov` file containing ProRes 4444 video (10-bit `yuva444p10le`). 
 
 | | PNG-in-MOV (default) | ProRes 4444 (opt-in) |
 |---|---|---|
-| File size (1.5 s, 4K 60 fps) | ~16 MB | ~100 MB |
+| File size (1.5 s, 4K 30 fps — current defaults) | ~8 MB | ~50 MB |
+| File size (1.5 s, 4K 60 fps with `--fps 60`) | ~16 MB | ~100 MB |
 | Quality | bit-exact lossless | 10-bit, lossy but very high |
 | Alpha interpretation | universal (straight) | varies by player |
 | CapCut / web editors | ✓ correct | ✗ glow blow-out |
@@ -357,17 +360,18 @@ For ProRes 4444: a `.mov` container with one video stream tagged `prores_ks` pro
 
 Both force `--container mov` and `--capture-format png`. Passing any of these explicitly to an incompatible value alongside `--alpha` is an error. The CLI flag reference: [`cli.md`](cli.md).
 
-### Don't need 4K? Smaller files via `--scale` and `--fps`
+### Don't need 4K? Smaller files via `--scale`
 
-PNG-in-MOV scales linearly with `pixel-count × fps`. Most compositing timelines are 1080p–1440p, not 4K. A typical good starting point:
+PNG-in-MOV scales linearly with `pixel-count × fps`. The `--alpha` default is already 30 fps, so the remaining knob is `--scale`. Most compositing timelines are 1080p–1440p, not 4K:
 
 ```bash
-h2v export my-clip.html --alpha --scale 2 --fps 30
+h2v export my-clip.html --alpha --scale 2
+# → 1440p × 30fps, ~2 MB for a 1.5s clip
 ```
 
-That cuts a ~16 MB clip to ~4 MB with no visible difference once it lands on a 1080p timeline. `--scale 1` (720p) drops further to ~1 MB. Both `--scale` and `--fps` are linear knobs; `--scale` is the bigger lever (quadratic in pixel count).
+`--scale 1` (720p) drops further to under 1 MB for the same clip. `--scale` is a quadratic lever (it scales pixel count by N²).
 
-For ProRes 4444 the same scaling applies, but starting from a much larger baseline — `--scale 2 --fps 30` brings a ~100 MB clip down to ~25 MB.
+For ProRes 4444 the same scaling applies, but starting from a much larger baseline — `--scale 2` brings a ~50 MB clip down to ~12 MB.
 
 ### What `--alpha` does NOT do
 

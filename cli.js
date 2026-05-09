@@ -11,6 +11,10 @@ const VERSION = PKG.version || '0.0.0';
 
 const DEFAULTS = {
   fps: 60,
+  // Stepped-down fps when --alpha is on. Alpha codecs (PNG-in-MOV,
+  // ProRes 4444) are far larger per-frame than h264; halving the frame
+  // rate halves the file size with no perceptual loss for compositing.
+  alphaFps: 30,
   width: 1280,
   height: 720,
   scale: 3,
@@ -141,7 +145,8 @@ EXPORT FLAGS
                       bundle marker's capture_duration. When omitted,
                       per-file metadata wins, then bundle marker, then the
                       default (${DEFAULTS.duration}s).
-  --fps <N>           Frames per second (default: ${DEFAULTS.fps}).
+  --fps <N>           Frames per second (default: ${DEFAULTS.fps}; ${DEFAULTS.alphaFps} when --alpha
+                      is set, since alpha output is much larger per-frame).
   --width <N>         Viewport width in CSS pixels. When omitted, per-file
                       <meta name="h2v-viewport"> or bundle marker viewport
                       attribute wins; default ${DEFAULTS.width}. Passing this flag
@@ -193,7 +198,9 @@ EXPORT FLAGS
   --capture-quality <N>
                       JPEG quality 1-100 (default: ${DEFAULTS.captureQuality}). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
-  --alpha             Record with a transparent background. The page
+  --alpha             Record with a transparent background. Steps --fps
+                      down to ${DEFAULTS.alphaFps} unless --fps is passed explicitly (alpha
+                      output is much larger per-frame than h264). The page
                       must not paint an opaque html/body background —
                       see docs/authoring.md. Two codec options:
 
@@ -329,6 +336,7 @@ function parseArgs(argv) {
     duration: DEFAULTS.duration,
     durationExplicit: false,
     fps: DEFAULTS.fps,
+    fpsExplicit: false,
     width: DEFAULTS.width,
     height: DEFAULTS.height,
     scale: DEFAULTS.scale,
@@ -371,7 +379,10 @@ function parseArgs(argv) {
       opts.duration = parseDurationFlag(requireValue('--duration'));
       opts.durationExplicit = true;
     }
-    else if (a === '--fps') opts.fps = parsePositiveInt(requireValue('--fps'), '--fps');
+    else if (a === '--fps') {
+      opts.fps = parsePositiveInt(requireValue('--fps'), '--fps');
+      opts.fpsExplicit = true;
+    }
     else if (a === '--width') {
       opts.width = parsePositiveInt(requireValue('--width'), '--width');
       opts.widthExplicit = true;
@@ -547,6 +558,15 @@ function resolveExportOpts(opts) {
         '(JPEG cannot carry an alpha channel). Omit --capture-format to let --alpha pick it.'
       );
       process.exit(2);
+    }
+    // Step fps down to DEFAULTS.alphaFps (30) by default for --alpha.
+    // Alpha output (PNG-in-MOV or ProRes 4444) is much larger per-frame
+    // than h264 — at 60fps the file sizes get unwieldy fast (tens of MB
+    // per second). 30fps is perceptually clean for compositing work and
+    // halves the file size. Users who want 60fps alpha can pass --fps 60
+    // explicitly.
+    if (!opts.fpsExplicit) {
+      opts.fps = DEFAULTS.alphaFps;
     }
   }
 

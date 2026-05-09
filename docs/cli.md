@@ -37,7 +37,8 @@ EXPORT FLAGS
                       bundle marker's capture_duration. When omitted,
                       per-file metadata wins, then bundle marker, then the
                       default (10s).
-  --fps <N>           Frames per second (default: 60).
+  --fps <N>           Frames per second (default: 60; 30 when --alpha
+                      is set, since alpha output is much larger per-frame).
   --width <N>         Viewport width in CSS pixels. When omitted, per-file
                       <meta name="h2v-viewport"> or bundle marker viewport
                       attribute wins; default 1280. Passing this flag
@@ -89,7 +90,9 @@ EXPORT FLAGS
   --capture-quality <N>
                       JPEG quality 1-100 (default: 95). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
-  --alpha             Record with a transparent background. The page
+  --alpha             Record with a transparent background. Steps --fps
+                      down to 30 unless --fps is passed explicitly (alpha
+                      output is much larger per-frame than h264). The page
                       must not paint an opaque html/body background —
                       see docs/authoring.md. Two codec options:
 
