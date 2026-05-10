@@ -90,30 +90,32 @@ EXPORT FLAGS
   --capture-quality <N>
                       JPEG quality 1-100 (default: 95). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
-  --alpha             Record with a transparent background. Steps --fps
-                      down to 30 unless --fps is passed explicitly (alpha
-                      output is much larger per-frame than h264). The page
-                      must not paint an opaque html/body background —
-                      see docs/authoring.md. Two codec options:
+  --alpha             Record with a transparent background. Output is
+                      PNG-in-MOV with pre-multiplied alpha by default
+                      (bit-exact lossless, ~6× smaller than ProRes 4444,
+                      renders correctly in CapCut, Premiere, Resolve,
+                      FCP, AE). Steps --fps down to 30 unless --fps
+                      is passed explicitly (alpha output is much larger
+                      per-frame than h264). The page must not paint an
+                      opaque html/body background — see docs/authoring.md.
 
-                        --alpha                       (default)
-                            PNG-in-MOV. Bit-exact lossless. Straight
-                            alpha that every NLE/player interprets
-                            identically (CapCut, Premiere, Resolve, FCP,
-                            AE, web). ~6× smaller than ProRes 4444.
-                            Recommended for almost everyone.
+                      Alternative codec: --alpha --codec prores_ks
+                      produces ProRes 4444 (yuva444p10le) for Apple
+                      colour-managed pipelines that demand it. Larger
+                      files; same pre-multiplied alpha behaviour.
 
-                        --alpha --codec prores_ks
-                            ProRes 4444 (yuva444p10le). 10-bit chroma.
-                            Larger files. Alpha metadata is ambiguous
-                            in ffmpeg's output — QuickTime/FCP render
-                            correctly, but CapCut and some web editors
-                            blow out semi-transparent regions. Use only
-                            if your pipeline specifically expects
-                            ProRes 4444.
-
-                      Both force --capture-format png. Errors if any
+                      Forces --capture-format png. Errors if a
                       conflicting flag is set explicitly.
+
+  --alpha-mode <m>    Alpha interpretation: 'premultiplied' (default,
+                      RGB×α baked into the file — matches what CapCut,
+                      Resolve, Premiere, AE and most video tools expect
+                      for compositing intermediates) or 'straight' (RGB
+                      stored at full strength — needed only for the rare
+                      tool that explicitly wants straight alpha; will
+                      cause white-halo / blown-out semi-transparent
+                      regions in CapCut and similar editors). Requires
+                      --alpha.
   --slowdown <N>      Real-time slowdown factor (default: 6). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting video plays back at original speed.

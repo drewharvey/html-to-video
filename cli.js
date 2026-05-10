@@ -198,30 +198,32 @@ EXPORT FLAGS
   --capture-quality <N>
                       JPEG quality 1-100 (default: ${DEFAULTS.captureQuality}). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
-  --alpha             Record with a transparent background. Steps --fps
-                      down to ${DEFAULTS.alphaFps} unless --fps is passed explicitly (alpha
-                      output is much larger per-frame than h264). The page
-                      must not paint an opaque html/body background —
-                      see docs/authoring.md. Two codec options:
+  --alpha             Record with a transparent background. Output is
+                      PNG-in-MOV with pre-multiplied alpha by default
+                      (bit-exact lossless, ~6× smaller than ProRes 4444,
+                      renders correctly in CapCut, Premiere, Resolve,
+                      FCP, AE). Steps --fps down to ${DEFAULTS.alphaFps} unless --fps
+                      is passed explicitly (alpha output is much larger
+                      per-frame than h264). The page must not paint an
+                      opaque html/body background — see docs/authoring.md.
 
-                        --alpha                       (default)
-                            PNG-in-MOV. Bit-exact lossless. Straight
-                            alpha that every NLE/player interprets
-                            identically (CapCut, Premiere, Resolve, FCP,
-                            AE, web). ~6× smaller than ProRes 4444.
-                            Recommended for almost everyone.
+                      Alternative codec: --alpha --codec prores_ks
+                      produces ProRes 4444 (yuva444p10le) for Apple
+                      colour-managed pipelines that demand it. Larger
+                      files; same pre-multiplied alpha behaviour.
 
-                        --alpha --codec prores_ks
-                            ProRes 4444 (yuva444p10le). 10-bit chroma.
-                            Larger files. Alpha metadata is ambiguous
-                            in ffmpeg's output — QuickTime/FCP render
-                            correctly, but CapCut and some web editors
-                            blow out semi-transparent regions. Use only
-                            if your pipeline specifically expects
-                            ProRes 4444.
-
-                      Both force --capture-format png. Errors if any
+                      Forces --capture-format png. Errors if a
                       conflicting flag is set explicitly.
+
+  --alpha-mode <m>    Alpha interpretation: 'premultiplied' (default,
+                      RGB×α baked into the file — matches what CapCut,
+                      Resolve, Premiere, AE and most video tools expect
+                      for compositing intermediates) or 'straight' (RGB
+                      stored at full strength — needed only for the rare
+                      tool that explicitly wants straight alpha; will
+                      cause white-halo / blown-out semi-transparent
+                      regions in CapCut and similar editors). Requires
+                      --alpha.
   --slowdown <N>      Real-time slowdown factor (default: ${DEFAULTS.slowdown}). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting video plays back at original speed.
@@ -358,6 +360,8 @@ function parseArgs(argv) {
     container: null,
     qualityPreset: 'standard',
     alpha: false,
+    alphaMode: 'premultiplied',
+    alphaModeExplicit: false,
     skipFfmpeg: false,
     dryRun: false,
     skipOpen: false,
@@ -416,6 +420,15 @@ function parseArgs(argv) {
     else if (a === '--container') opts.container = parseContainer(requireValue('--container'));
     else if (a === '--quality-preset') opts.qualityPreset = parseQualityPreset(requireValue('--quality-preset'));
     else if (a === '--alpha') opts.alpha = true;
+    else if (a === '--alpha-mode') {
+      const v = requireValue('--alpha-mode');
+      if (v !== 'straight' && v !== 'premultiplied') {
+        console.error(`error: --alpha-mode must be 'straight' or 'premultiplied' (got '${v}')`);
+        process.exit(2);
+      }
+      opts.alphaMode = v;
+      opts.alphaModeExplicit = true;
+    }
     else if (a === '--no-ffmpeg') opts.skipFfmpeg = true;
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--no-open') opts.skipOpen = true;
@@ -568,6 +581,11 @@ function resolveExportOpts(opts) {
     if (!opts.fpsExplicit) {
       opts.fps = DEFAULTS.alphaFps;
     }
+  } else if (opts.alphaModeExplicit) {
+    // --alpha-mode is only meaningful with --alpha; catch the mistake
+    // rather than silently ignoring it.
+    console.error('error: --alpha-mode requires --alpha to be set');
+    process.exit(2);
   }
 
   if (opts.captureFormat === 'png' && opts.captureQualityExplicit) {
@@ -1270,12 +1288,23 @@ function ffmpegStitch(captureDir, outPath, opts) {
     // index.
     const faststart = (opts.container === 'mp4' || opts.container === 'mov')
       ? ['-movflags', '+faststart'] : [];
+    // Pre-multiply alpha (RGB×α) before encoding when --alpha is on with
+    // the default --alpha-mode. Most video-pipeline tools — CapCut,
+    // Resolve, Premiere, AE — assume premultiplied alpha for compositing
+    // intermediates; without this, semi-transparent pixels render with
+    // full-strength RGB blown out behind partial alpha (white halos on
+    // glows, solid colours where semi-transparent backgrounds should be).
+    // Users who explicitly want straight alpha pass --alpha-mode straight.
+    const alphaFilter = (opts.alpha && opts.alphaMode === 'premultiplied')
+      ? ['-vf', 'premultiply=inplace=1']
+      : [];
     const args = [
       '-y',
       '-loglevel', 'error',
       '-framerate', String(opts.fps),
       '-start_number', '1',
       '-i', path.join(captureDir, '%04d.' + captureExt),
+      ...alphaFilter,
       ...buildEncodeArgs(opts),
       ...faststart,
       outPath,
@@ -1955,11 +1984,18 @@ async function main() {
   // --alpha forces ProRes profile 4 (4444) regardless of tier; show that
   // in the summary so the log doesn't claim profile 3 when alpha is on.
   let codecDesc;
+  // The alpha-mode suffix is part of the codec description because it
+  // changes the bytes that go into the file (a -vf premultiply step in
+  // ffmpegStitch). Worth surfacing in the run summary so the user can
+  // see at a glance which interpretation was baked in.
+  const alphaSuffix = opts.alpha
+    ? ` + alpha (${opts.alphaMode === 'premultiplied' ? 'pre-mult' : 'straight'})`
+    : '';
   if (opts.codec === 'prores_ks') {
     const proresProfile = (opts.alpha || tier === 'max') ? '4 (4444)' : '3 (HQ)';
-    codecDesc = `${opts.codec} profile ${proresProfile}${opts.alpha ? ' + alpha' : ''}`;
+    codecDesc = `${opts.codec} profile ${proresProfile}${alphaSuffix}`;
   } else if (opts.codec === 'png') {
-    codecDesc = `${opts.codec} (lossless${opts.alpha ? ' + alpha' : ''})`;
+    codecDesc = `${opts.codec} (lossless${alphaSuffix})`;
   } else {
     codecDesc = `${opts.codec} crf ${opts.crf}`;
   }

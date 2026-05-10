@@ -319,6 +319,16 @@ html[data-h2v-recording] body { background: transparent; }  /* h2v export */
 
 `data-h2v-recording` is set by h2v on `<html>` after navigation during every export run (alpha or not). Combined with `--alpha`, this gives you a single source file that previews opaque locally and records with alpha for compositing.
 
+### Alpha mode: pre-multiplied (default) vs straight
+
+h2v emits **pre-multiplied alpha** by default — meaning each pixel's RGB is multiplied by α before being written to the file. Most video tools (CapCut, DaVinci Resolve, Premiere, After Effects, Final Cut Pro) assume pre-multiplied alpha for compositing intermediates. If you ship them a straight-alpha file, semi-transparent regions blow out — a 5%-opacity white badge background renders as solid white, glows turn into bright halos, etc.
+
+Pre-multiplied is the right default for nearly every workflow. If you specifically need straight alpha (for a tool that wants it that way, or for further pipeline processing that does its own alpha math), opt in:
+
+```bash
+h2v export my-clip.html --alpha --alpha-mode straight
+```
+
 ### Codec options for `--alpha`
 
 Two codec choices, both produce `.mov` files with a real alpha channel:
@@ -329,7 +339,7 @@ Two codec choices, both produce `.mov` files with a real alpha channel:
 h2v export my-clip.html --alpha
 ```
 
-What you get: `.mov` file containing PNG-codec video. Bit-exact lossless. The PNG codec spec mandates straight alpha, so **every NLE and player interprets the alpha channel the same way** — no surprises across CapCut, Premiere, Resolve, FCP, AE, or web playback.
+What you get: `.mov` file containing PNG-codec video with pre-multiplied alpha. Bit-exact lossless. Recommended for almost everyone — small, fast, plays cleanly in every NLE we've tested (CapCut, Premiere, Resolve, FCP, AE).
 
 #### Opt-in: ProRes 4444 (`--alpha --codec prores_ks`)
 
@@ -337,26 +347,26 @@ What you get: `.mov` file containing PNG-codec video. Bit-exact lossless. The PN
 h2v export my-clip.html --alpha --codec prores_ks
 ```
 
-What you get: `.mov` file containing ProRes 4444 video (10-bit `yuva444p10le`). Industry-standard mastering codec for Apple-ecosystem pro workflows. **Larger files** (~5–10× bigger than PNG-in-MOV for h2v's content) and **alpha interpretation can vary across NLEs**: ffmpeg's ProRes 4444 output ships without an explicit alpha-mode metadata tag, so QuickTime/FCP guess correctly while CapCut and some web editors guess premultiplied — semi-transparent regions (glows, shadows, fades) appear as bright halos instead of soft falloff. Use ProRes 4444 only if your colour-managed pipeline specifically expects it.
+What you get: `.mov` file containing ProRes 4444 video (10-bit `yuva444p10le`), also pre-multiplied. Industry-standard mastering codec for Apple colour-managed workflows. **5-10× larger files** than PNG-in-MOV for the same content. Use only if your pipeline specifically expects ProRes 4444.
 
 #### Quick comparison
 
 | | PNG-in-MOV (default) | ProRes 4444 (opt-in) |
 |---|---|---|
+| Invocation | `--alpha` | `--alpha --codec prores_ks` |
 | File size (1.5 s, 4K 30 fps — current defaults) | ~8 MB | ~50 MB |
 | File size (1.5 s, 4K 60 fps with `--fps 60`) | ~16 MB | ~100 MB |
 | Quality | bit-exact lossless | 10-bit, lossy but very high |
-| Alpha interpretation | universal (straight) | varies by player |
-| CapCut / web editors | ✓ correct | ✗ glow blow-out |
-| Premiere / Resolve | ✓ correct | usually correct |
-| QuickTime / FCP | ✓ correct (decode-only player support varies) | ✓ correct |
-| When to pick it | almost always | colour-managed Apple pipeline |
+| Alpha mode | pre-multiplied (default) | pre-multiplied (default) |
+| CapCut, Premiere, Resolve, FCP, AE | ✓ correct | ✓ correct |
+| QuickTime Player preview | ✗ won't open (codec tag issue) | ✓ correct |
+| When to pick it | almost always | Apple colour-managed pipelines |
 
 ### What's in the output file
 
-For PNG-in-MOV: a `.mov` container with one video stream tagged `png` codec, `pix_fmt rgba` (8 bits per channel including alpha). Frame data is per-frame zlib-compressed PNG.
+For PNG-in-MOV: a `.mov` container with one video stream tagged `png` codec, `pix_fmt rgba` (8 bits per channel including alpha). Frame data is per-frame zlib-compressed PNG with `RGB×α` pre-baked.
 
-For ProRes 4444: a `.mov` container with one video stream tagged `prores_ks` profile 4, `pix_fmt yuva444p10le` (10 bits per channel including alpha), `-vendor apl0` for NLE compatibility.
+For ProRes 4444: a `.mov` container with one video stream tagged `prores_ks` profile 4, `pix_fmt yuva444p10le` (10 bits per channel including alpha), `-vendor apl0` for NLE compatibility. Same `RGB×α` pre-baking.
 
 Both force `--container mov` and `--capture-format png`. Passing any of these explicitly to an incompatible value alongside `--alpha` is an error. The CLI flag reference: [`cli.md`](cli.md).
 

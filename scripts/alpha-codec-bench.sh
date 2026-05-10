@@ -69,30 +69,35 @@ encode() {
 echo
 echo "→ Encoding candidates:"
 
-# A. PNG-in-MOV — the h2v --alpha default. Lossless, ~6× smaller than ProRes,
-#    straight-alpha at the codec level so every player renders correctly.
-encode "PNG-in-MOV (h2v default)"  "alpha-test.01-png.mov" \
+# A. PNG-in-MOV, pre-multiplied — the h2v --alpha default.
+encode "PNG-in-MOV pre-mult (h2v default)"  "alpha-test.01-png-premult.mov" \
+  -vf "premultiply=inplace=1" -c:v png -pix_fmt rgba
+
+# B. PNG-in-MOV, straight alpha — opt-out via --alpha-mode straight.
+encode "PNG-in-MOV straight (--alpha-mode)" "alpha-test.02-png-straight.mov" \
   -c:v png -pix_fmt rgba
 
-# B. ProRes 4444 — opt-in via --codec prores_ks. Larger files; ambiguous
-#    alpha-mode metadata (works in QuickTime/FCP, breaks in CapCut).
-encode "ProRes 4444 (opt-in)"      "alpha-test.02-prores4444.mov" \
+# C. ProRes 4444, pre-multiplied — opt-in via --codec prores_ks.
+encode "ProRes 4444 pre-mult (codec opt-in)" "alpha-test.03-prores-premult.mov" \
+  -vf "premultiply=inplace=1" -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le -vendor apl0
+
+# D. ProRes 4444, straight — only useful if your tool explicitly wants straight.
+encode "ProRes 4444 straight"               "alpha-test.04-prores-straight.mov" \
   -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le -vendor apl0
 
-# C. QuickTime Animation (qtrle) — lossless, similar size to PNG-in-MOV,
-#    legacy Apple codec with very long compatibility tail.
-encode "qtrle (lossless)"          "alpha-test.03-qtrle.mov" \
+# E. QuickTime Animation (qtrle) — alternative lossless codec.
+encode "qtrle (lossless)"                   "alpha-test.05-qtrle.mov" \
   -c:v qtrle -pix_fmt argb
 
-# D. HEVC with alpha via VideoToolbox — macOS-only hardware encoder.
+# F. HEVC with alpha via VideoToolbox — macOS-only hardware encoder.
 #    Lossy but visually clean at -alpha_quality 0.75. Often dramatically
 #    smaller than even the lossless options. Skipped on non-macOS hosts.
 if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q hevc_videotoolbox; then
-  encode "HEVC w/ alpha (macOS)"   "alpha-test.04-hevc-vt.mov" \
+  encode "HEVC w/ alpha (macOS)"            "alpha-test.06-hevc-vt.mov" \
     -c:v hevc_videotoolbox -allow_sw 1 -alpha_quality 0.75 \
     -tag:v hvc1 -pix_fmt bgra
 else
-  echo "→ HEVC w/ alpha (macOS)         skipped — hevc_videotoolbox not available"
+  echo "→ HEVC w/ alpha (macOS)                  skipped — hevc_videotoolbox not available"
 fi
 
 # -----------------------------------------------------------------------------
