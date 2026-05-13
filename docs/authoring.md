@@ -331,15 +331,23 @@ h2v export my-clip.html --alpha --alpha-mode straight
 
 ### Codec options for `--alpha`
 
-Two codec choices, both produce `.mov` files with a real alpha channel:
+Three codec choices, all produce `.mov` files with a real alpha channel. The default has changed twice as we learned which codecs survive in CapCut at full 4K + long-form scale; the table at the end summarises where each one stands today.
 
-#### Default: PNG-in-MOV (`--alpha`)
+#### Default: qtrle / QuickTime Animation (`--alpha`)
 
 ```bash
 h2v export my-clip.html --alpha
 ```
 
-What you get: `.mov` file containing PNG-codec video with pre-multiplied alpha. Bit-exact lossless. Recommended for almost everyone — small, fast, plays cleanly in every NLE we've tested (CapCut, Premiere, Resolve, FCP, AE).
+What you get: `.mov` file containing `qtrle` video (QuickTime Animation, RLE-lossless) with pre-multiplied alpha (`pix_fmt argb`). Native Apple codec, very long compatibility tail. Renders correctly in CapCut at 4K and long durations, plus Premiere, Resolve, FCP, AE — this is the only lossless alpha-capable codec we've tested that passes the full-scale CapCut decode reliably. Recommended for nearly every workflow.
+
+#### Opt-in: PNG-in-MOV (`--alpha --codec png`)
+
+```bash
+h2v export my-clip.html --alpha --codec png
+```
+
+What you get: `.mov` file containing `png` video with pre-multiplied alpha (`pix_fmt rgba`). Bit-exact lossless, typically the smallest files of the three options. **Not recommended for CapCut**: empirically CapCut's PNG-codec decoder drops alpha at 4K + long durations (>~5 s), rendering backgrounds as solid white. Works cleanly in QuickTime, IINA, FCP, web playback. Useful when you know the consumer of the file and CapCut isn't it. This was the `--alpha` default for a short while before we ran the full-matrix CapCut test.
 
 #### Opt-in: ProRes 4444 (`--alpha --codec prores_ks`)
 
@@ -347,41 +355,47 @@ What you get: `.mov` file containing PNG-codec video with pre-multiplied alpha. 
 h2v export my-clip.html --alpha --codec prores_ks
 ```
 
-What you get: `.mov` file containing ProRes 4444 video (10-bit `yuva444p10le`), also pre-multiplied. Industry-standard mastering codec for Apple colour-managed workflows. **5-10× larger files** than PNG-in-MOV for the same content. Use only if your pipeline specifically expects ProRes 4444.
+What you get: `.mov` file containing ProRes 4444 video (10-bit `yuva444p10le`), pre-multiplied. Industry-standard mastering codec for Apple colour-managed workflows. **5–10× larger files** than qtrle for the same content. Picked over qtrle only when your colour-managed pipeline specifically expects ProRes 4444. This was the very first `--alpha` default; it was demoted because PNG-in-MOV is much smaller and was thought to have unambiguous alpha semantics, then both PNG and ProRes-straight were de-recommended once we discovered CapCut treats them differently than QuickTime/FCP.
 
 #### Quick comparison
 
-| | PNG-in-MOV (default) | ProRes 4444 (opt-in) |
-|---|---|---|
-| Invocation | `--alpha` | `--alpha --codec prores_ks` |
-| File size (1.5 s, 4K 30 fps — current defaults) | ~8 MB | ~50 MB |
-| File size (1.5 s, 4K 60 fps with `--fps 60`) | ~16 MB | ~100 MB |
-| Quality | bit-exact lossless | 10-bit, lossy but very high |
-| Alpha mode | pre-multiplied (default) | pre-multiplied (default) |
-| CapCut, Premiere, Resolve, FCP, AE | ✓ correct | ✓ correct |
-| QuickTime Player preview | ✗ won't open (codec tag issue) | ✓ correct |
-| When to pick it | almost always | Apple colour-managed pipelines |
+| | qtrle (default) | PNG-in-MOV (opt-in) | ProRes 4444 (opt-in) |
+|---|---|---|---|
+| Invocation | `--alpha` | `--alpha --codec png` | `--alpha --codec prores_ks` |
+| File size (1.5 s, 4K 30 fps) | ~10 MB | ~8 MB | ~50 MB |
+| File size (16.8 s, 4K 30 fps) | ~100 MB | ~80 MB | ~520 MB |
+| Quality | bit-exact lossless | bit-exact lossless | 10-bit, lossy but very high |
+| Alpha mode | pre-multiplied (default) | pre-multiplied (default) | pre-multiplied (default) |
+| CapCut (4K, long-form) | ✓ correct | ✗ solid-white backgrounds | ✓ correct |
+| Premiere / Resolve | ✓ correct | ✓ correct | ✓ correct |
+| FCP / AE | ✓ correct | ✓ correct | ✓ correct |
+| QuickTime Player / IINA | ✓ correct | ✓ correct | ✓ correct |
+| When to pick it | almost always | non-CapCut workflows that want smallest files | Apple colour-managed pipelines |
+
+NLE tests above were conducted on a real-world 4K 30 fps 17 s alpha export. Short clips (1.5 s) can behave differently — PNG-in-MOV worked in a short-clip CapCut test before failing at full scale — so trust the longer-form results when picking a codec for production work.
 
 ### What's in the output file
 
-For PNG-in-MOV: a `.mov` container with one video stream tagged `png` codec, `pix_fmt rgba` (8 bits per channel including alpha). Frame data is per-frame zlib-compressed PNG with `RGB×α` pre-baked.
+For qtrle (default): a `.mov` container with one video stream tagged `qtrle` codec, `pix_fmt argb` (8 bits per channel including alpha, RLE-compressed). Frame data has `RGB×α` pre-baked via `-vf premultiply=inplace=1`.
+
+For PNG-in-MOV: a `.mov` container with one video stream tagged `png` codec, `pix_fmt rgba`. Frame data is per-frame zlib-compressed PNG with `RGB×α` pre-baked.
 
 For ProRes 4444: a `.mov` container with one video stream tagged `prores_ks` profile 4, `pix_fmt yuva444p10le` (10 bits per channel including alpha), `-vendor apl0` for NLE compatibility. Same `RGB×α` pre-baking.
 
-Both force `--container mov` and `--capture-format png`. Passing any of these explicitly to an incompatible value alongside `--alpha` is an error. The CLI flag reference: [`cli.md`](cli.md).
+All three force `--container mov` and `--capture-format png`. Passing any of these explicitly to an incompatible value alongside `--alpha` is an error. The CLI flag reference: [`cli.md`](cli.md).
 
 ### Don't need 4K? Smaller files via `--scale`
 
-PNG-in-MOV scales linearly with `pixel-count × fps`. The `--alpha` default is already 30 fps, so the remaining knob is `--scale`. Most compositing timelines are 1080p–1440p, not 4K:
+qtrle (and PNG, and ProRes 4444) scale roughly linearly with `pixel-count × fps`. The `--alpha` default is already 30 fps, so the remaining knob is `--scale`. Most compositing timelines are 1080p–1440p, not 4K:
 
 ```bash
 h2v export my-clip.html --alpha --scale 2
-# → 1440p × 30fps, ~2 MB for a 1.5s clip
+# → 1440p × 30fps, ~3 MB for a 1.5s clip
 ```
 
-`--scale 1` (720p) drops further to under 1 MB for the same clip. `--scale` is a quadratic lever (it scales pixel count by N²).
+`--scale 1` (720p) drops further to ~1 MB for the same clip. `--scale` is a quadratic lever (it scales pixel count by N²).
 
-For ProRes 4444 the same scaling applies, but starting from a much larger baseline — `--scale 2` brings a ~50 MB clip down to ~12 MB.
+ProRes 4444 follows the same curve from a much larger baseline — `--scale 2` brings a ~50 MB clip down to ~12 MB.
 
 ### What `--alpha` does NOT do
 

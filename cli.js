@@ -36,19 +36,20 @@ const DEFAULTS = {
 const CAPTURE_FORMATS = new Set(['jpeg', 'png']);
 const CAPTURE_EXT_FOR_FORMAT = { jpeg: 'jpg', png: 'png' };
 
-const VIDEO_CODECS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'prores_ks', 'png']);
+const VIDEO_CODECS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'prores_ks', 'qtrle', 'png']);
 const VIDEO_CONTAINERS = new Set(['mp4', 'mov', 'webm']);
 
 // Default container per codec, plus the full set of containers each
 // codec is allowed to land in. ProRes outside .mov breaks most NLEs;
-// VP9 outside .webm is fragile across players. PNG-in-MOV is QuickTime's
-// canonical lossless-with-alpha format; png in mp4 or webm would be
-// unusual and not what users want, so keep it mov-only too.
+// VP9 outside .webm is fragile across players. PNG-in-MOV and qtrle are
+// QuickTime-native lossless-with-alpha formats — neither is supported
+// in mp4 or webm by any common player.
 const DEFAULT_CONTAINER_FOR_CODEC = {
   libx264: 'mp4',
   libx265: 'mp4',
   'libvpx-vp9': 'webm',
   prores_ks: 'mov',
+  qtrle: 'mov',
   png: 'mov',
 };
 const ALLOWED_CONTAINERS_FOR_CODEC = {
@@ -56,6 +57,7 @@ const ALLOWED_CONTAINERS_FOR_CODEC = {
   libx265: new Set(['mp4', 'mov']),
   'libvpx-vp9': new Set(['webm']),
   prores_ks: new Set(['mov']),
+  qtrle: new Set(['mov']),
   png: new Set(['mov']),
 };
 
@@ -179,12 +181,14 @@ EXPORT FLAGS
                       prores_ks (uses a fixed profile instead). Default
                       depends on --quality-preset.
   --codec <name>      Video encoder. One of: libx264, libx265,
-                      libvpx-vp9, prores_ks, png. h264 is the universal
-                      default; h265 gives ~30% smaller files; vp9 targets
-                      web delivery; prores_ks produces editing-friendly
-                      masters; png is lossless PNG-in-MOV (used by --alpha
-                      and useful as a no-CRF lossless intermediate).
-                      Default depends on --quality-preset and --alpha.
+                      libvpx-vp9, prores_ks, qtrle, png. h264 is the
+                      universal default; h265 gives ~30% smaller files;
+                      vp9 targets web delivery; prores_ks produces
+                      editing-friendly masters; qtrle is lossless
+                      QuickTime Animation (the --alpha default); png is
+                      lossless PNG-in-MOV (alpha-capable but unreliable
+                      in CapCut at 4K — see --alpha). Default depends on
+                      --quality-preset and --alpha.
   --container <ext>   Output container: mp4, mov, or webm. Auto-derived
                       from --codec when omitted (h264/h265 → mp4, vp9 →
                       webm, prores → mov). Set explicitly to override
@@ -199,18 +203,29 @@ EXPORT FLAGS
                       JPEG quality 1-100 (default: ${DEFAULTS.captureQuality}). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
   --alpha             Record with a transparent background. Output is
-                      PNG-in-MOV with pre-multiplied alpha by default
-                      (bit-exact lossless, ~6× smaller than ProRes 4444,
-                      renders correctly in CapCut, Premiere, Resolve,
-                      FCP, AE). Steps --fps down to ${DEFAULTS.alphaFps} unless --fps
-                      is passed explicitly (alpha output is much larger
-                      per-frame than h264). The page must not paint an
-                      opaque html/body background — see docs/authoring.md.
+                      qtrle-in-MOV (QuickTime Animation) with pre-
+                      multiplied alpha by default — lossless, native
+                      Apple codec, renders correctly in CapCut, Premiere,
+                      Resolve, FCP, AE at 4K and long durations. Steps
+                      --fps down to ${DEFAULTS.alphaFps} unless --fps is passed explicitly
+                      (alpha output is much larger per-frame than h264).
+                      The page must not paint an opaque html/body
+                      background — see docs/authoring.md.
 
-                      Alternative codec: --alpha --codec prores_ks
-                      produces ProRes 4444 (yuva444p10le) for Apple
-                      colour-managed pipelines that demand it. Larger
-                      files; same pre-multiplied alpha behaviour.
+                      Codec alternatives:
+
+                        --alpha --codec prores_ks
+                            ProRes 4444 (yuva444p10le, 10-bit). Apple
+                            colour-managed mastering pipelines. Larger
+                            files (~5-10× qtrle). Same pre-multiplied
+                            alpha behaviour.
+
+                        --alpha --codec png
+                            PNG-in-MOV. Bit-exact lossless, smallest
+                            files. NOT recommended for CapCut — its PNG
+                            decoder drops alpha at 4K + long durations,
+                            producing solid-white backgrounds. Works
+                            cleanly in QuickTime, IINA, FCP, web.
 
                       Forces --capture-format png. Errors if a
                       conflicting flag is set explicitly.
@@ -539,26 +554,36 @@ function resolveExportOpts(opts) {
   // capture format. Resolve it before the codec/container compatibility
   // check below so its overrides participate in that validation.
   //
-  // Default alpha codec is `png` (PNG-in-MOV): bit-exact lossless, ~6×
-  // smaller files than ProRes 4444, and crucially the PNG codec spec
-  // mandates straight alpha so every player (CapCut, Resolve, Premiere,
-  // FCP, AE, web) interprets the alpha channel identically. ProRes 4444
-  // from ffmpeg ships ambiguous alpha-mode metadata — players guess, and
-  // some (CapCut) guess premultiplied, blowing out semi-transparent
-  // glows/shadows into bright halos against the intended soft falloff.
+  // Default alpha codec is `qtrle` (QuickTime Animation, RLE-lossless):
+  // bit-exact lossless, file size comparable to PNG-in-MOV, and — most
+  // importantly — decodes correctly in CapCut at 4K and long durations.
+  // That last property is what landed us here. Earlier defaults didn't
+  // survive a full-matrix test against a real-world 4K 17s clip:
   //
-  // `prores_ks` remains opt-in for Apple colour-managed workflows or
-  // pipelines that specifically demand 10-bit chroma. Other codecs are
-  // rejected: libx264/libx265 have no alpha; libvpx-vp9 silently drops
-  // the alpha plane in ffmpeg's single-call invocation (verified). qtrle
-  // would also work end-to-end but doesn't add anything over PNG-in-MOV
-  // for h2v's content.
+  //   • `prores_ks` (the original default) — ffmpeg's prores_ks muxer
+  //     ships without an explicit alpha-mode metadata tag, so players
+  //     guess; QuickTime/FCP guessed straight (correct for our straight
+  //     output), CapCut guessed pre-multiplied (wrong → bright halos).
+  //   • `png` (the second default, with `-vf premultiply=inplace=1`)
+  //     fixed the short-clip CapCut test, but CapCut's PNG-codec
+  //     decoder failed on alpha at 4K + long duration regardless of
+  //     alpha mode — backgrounds rendered solid white. PNG-in-MOV
+  //     still works for IINA, QuickTime, FCP, some web flows, so it
+  //     remains opt-in via `--codec png`.
+  //   • `qtrle` + pre-multiplied alpha (current default) — passed the
+  //     same 4K 17s CapCut test on the first try, plus the existing
+  //     QuickTime/FCP/Resolve/Premiere expectations.
+  //
+  // `prores_ks` remains opt-in for Apple colour-managed workflows that
+  // demand 10-bit chroma. Other codecs are rejected: libx264/libx265
+  // have no alpha; libvpx-vp9 silently drops the alpha plane in
+  // ffmpeg's single-call invocation (verified empirically).
   if (opts.alpha) {
     if (!opts.codecExplicit) {
-      opts.codec = 'png';
-    } else if (opts.codec !== 'png' && opts.codec !== 'prores_ks') {
+      opts.codec = 'qtrle';
+    } else if (opts.codec !== 'qtrle' && opts.codec !== 'png' && opts.codec !== 'prores_ks') {
       console.error(
-        `error: --alpha supports --codec png (default) or --codec prores_ks ` +
+        `error: --alpha supports --codec qtrle (default), --codec png, or --codec prores_ks ` +
         `(got --codec ${opts.codec}). Omit --codec to use the default.`
       );
       process.exit(2);
@@ -1232,14 +1257,30 @@ function buildEncodeArgs(opts) {
     }
     case 'png': {
       // PNG codec inside MOV: bit-exact lossless per-frame zlib + filter
-      // compression. PNG's storage format is straight-alpha by spec, so
-      // every NLE/player interprets the alpha plane identically — no
-      // ambiguous metadata like ProRes 4444 has. Pix_fmt rgba when alpha
-      // is on, rgb24 otherwise; both are lossless. PNG codec has no
-      // quality knobs — --crf and --quality-preset are ignored.
+      // compression. Pix_fmt rgba when alpha is on, rgb24 otherwise;
+      // both are lossless. PNG codec has no quality knobs — --crf and
+      // --quality-preset are ignored. Note: PNG-with-alpha decodes
+      // unreliably in CapCut at 4K + long durations (verified
+      // empirically). It's kept as an opt-in for non-CapCut workflows
+      // (IINA, QuickTime, FCP); the --alpha default is qtrle.
       const pixFmt = opts.alpha ? 'rgba' : 'rgb24';
       return [
         '-c:v', 'png',
+        '-pix_fmt', pixFmt,
+      ];
+    }
+    case 'qtrle': {
+      // QuickTime Animation (qtrle) inside MOV: RLE-lossless, native
+      // Apple codec, very broad NLE compatibility. The default --alpha
+      // codec because it's the only lossless alpha-capable codec we
+      // tested that decodes correctly in CapCut at 4K + long durations.
+      // pix_fmt argb is the qtrle-native alpha layout; rgb24 when alpha
+      // is off keeps the codec sensible but the path is rarely useful
+      // (qtrle's whole reason for existence in h2v is alpha support).
+      // No quality knobs — --crf and --quality-preset are ignored.
+      const pixFmt = opts.alpha ? 'argb' : 'rgb24';
+      return [
+        '-c:v', 'qtrle',
         '-pix_fmt', pixFmt,
       ];
     }
@@ -1994,7 +2035,7 @@ async function main() {
   if (opts.codec === 'prores_ks') {
     const proresProfile = (opts.alpha || tier === 'max') ? '4 (4444)' : '3 (HQ)';
     codecDesc = `${opts.codec} profile ${proresProfile}${alphaSuffix}`;
-  } else if (opts.codec === 'png') {
+  } else if (opts.codec === 'png' || opts.codec === 'qtrle') {
     codecDesc = `${opts.codec} (lossless${alphaSuffix})`;
   } else {
     codecDesc = `${opts.codec} crf ${opts.crf}`;

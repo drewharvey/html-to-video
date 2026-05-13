@@ -89,3 +89,25 @@ node tests/bench-parallel.js B        # only mode B
 ```
 
 Result on this codebase (sandbox ARM Linux Chromium, K ∈ {1, 2, 4}): Mode A is catastrophic — K=2 made each capture ~16× slower (per-shot 78 ms → 1399 ms). Mode B is near-linear: K=4 hits 3.42× of ideal (≈85% efficiency). That's why the `--concurrency` implementation in `cli.js` uses one browser per worker, never multiple pages in one browser. If you change that, re-run this benchmark first.
+
+## bench-alpha-codec.sh
+
+Compares every alpha-capable codec against the same set of captured frames. Run this whenever you're considering a change to the `--alpha` default codec — it produces the input data the call needs.
+
+```
+./tests/bench-alpha-codec.sh                       # default fixture
+./tests/bench-alpha-codec.sh path/to/clip.html     # custom HTML
+pbpaste | ./tests/bench-alpha-codec.sh --paste     # paste HTML from clipboard
+```
+
+How it works:
+
+1. Captures frames once via `node cli.js export ... --alpha --no-ffmpeg`, forcing duration to `BENCH_DURATION_SECS` (default `20` — matches/exceeds the 4K 30 fps 17 s real-world failure-mode profile). Override the duration with `BENCH_DURATION_SECS=30 ./tests/bench-alpha-codec.sh`.
+2. Re-encodes those exact frames seven ways (qtrle pre-mult / qtrle straight / PNG pre-mult / PNG straight / ProRes 4444 pre-mult / ProRes 4444 straight / HEVC-VT on macOS), saving each to `output/alpha-bench/`.
+3. Prints a size summary so you can spot egregious outliers.
+
+Default fixture is `tests/bench-alpha-codec.fixture.html` — the real-world badges animation that revealed CapCut's PNG-decoder failure at 4K + long durations. That failure is the reason qtrle is the current `--alpha` default (see the alpha invariants in `CLAUDE.md`); future codec-default discussions need a reproducible reference, and this fixture is it.
+
+How to use the output: drag each `.mov` onto your NLE timeline. For each variant, verify (a) it imports without an "interpret footage" dialog, (b) the alpha channel is auto-detected, (c) it renders visually correct. Rename or restart the NLE between imports to defeat decoder caching, which can give false positives.
+
+Approx run time: capture step dominates. At default `BENCH_DURATION_SECS=20`, slowdown 6×, 4K → ~120 s wall time for the capture, plus a few seconds for each of the seven encodes.

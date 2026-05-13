@@ -71,12 +71,14 @@ EXPORT FLAGS
                       prores_ks (uses a fixed profile instead). Default
                       depends on --quality-preset.
   --codec <name>      Video encoder. One of: libx264, libx265,
-                      libvpx-vp9, prores_ks, png. h264 is the universal
-                      default; h265 gives ~30% smaller files; vp9 targets
-                      web delivery; prores_ks produces editing-friendly
-                      masters; png is lossless PNG-in-MOV (used by --alpha
-                      and useful as a no-CRF lossless intermediate).
-                      Default depends on --quality-preset and --alpha.
+                      libvpx-vp9, prores_ks, qtrle, png. h264 is the
+                      universal default; h265 gives ~30% smaller files;
+                      vp9 targets web delivery; prores_ks produces
+                      editing-friendly masters; qtrle is lossless
+                      QuickTime Animation (the --alpha default); png is
+                      lossless PNG-in-MOV (alpha-capable but unreliable
+                      in CapCut at 4K — see --alpha). Default depends on
+                      --quality-preset and --alpha.
   --container <ext>   Output container: mp4, mov, or webm. Auto-derived
                       from --codec when omitted (h264/h265 → mp4, vp9 →
                       webm, prores → mov). Set explicitly to override
@@ -91,18 +93,29 @@ EXPORT FLAGS
                       JPEG quality 1-100 (default: 95). Lower for faster
                       iteration; raise toward 100 for archival. JPEG only.
   --alpha             Record with a transparent background. Output is
-                      PNG-in-MOV with pre-multiplied alpha by default
-                      (bit-exact lossless, ~6× smaller than ProRes 4444,
-                      renders correctly in CapCut, Premiere, Resolve,
-                      FCP, AE). Steps --fps down to 30 unless --fps
-                      is passed explicitly (alpha output is much larger
-                      per-frame than h264). The page must not paint an
-                      opaque html/body background — see docs/authoring.md.
+                      qtrle-in-MOV (QuickTime Animation) with pre-
+                      multiplied alpha by default — lossless, native
+                      Apple codec, renders correctly in CapCut, Premiere,
+                      Resolve, FCP, AE at 4K and long durations. Steps
+                      --fps down to 30 unless --fps is passed explicitly
+                      (alpha output is much larger per-frame than h264).
+                      The page must not paint an opaque html/body
+                      background — see docs/authoring.md.
 
-                      Alternative codec: --alpha --codec prores_ks
-                      produces ProRes 4444 (yuva444p10le) for Apple
-                      colour-managed pipelines that demand it. Larger
-                      files; same pre-multiplied alpha behaviour.
+                      Codec alternatives:
+
+                        --alpha --codec prores_ks
+                            ProRes 4444 (yuva444p10le, 10-bit). Apple
+                            colour-managed mastering pipelines. Larger
+                            files (~5-10× qtrle). Same pre-multiplied
+                            alpha behaviour.
+
+                        --alpha --codec png
+                            PNG-in-MOV. Bit-exact lossless, smallest
+                            files. NOT recommended for CapCut — its PNG
+                            decoder drops alpha at 4K + long durations,
+                            producing solid-white backgrounds. Works
+                            cleanly in QuickTime, IINA, FCP, web.
 
                       Forces --capture-format png. Errors if a
                       conflicting flag is set explicitly.
