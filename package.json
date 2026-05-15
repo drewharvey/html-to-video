@@ -14,7 +14,14 @@
     "export": "node ./cli.js export",
     "docs:sync": "node ./scripts/sync-help-docs.js",
     "docs:check": "node ./scripts/sync-help-docs.js --check",
-    "test:bundle": "node ./tests/test-bundle.js"
+    "test:bundle": "node ./tests/test-bundle.js",
+    "test:plan": "node ./tests/test-plan.js",
+    "test:review": "node ./tests/test-review.js",
+    "test:export-flags": "node ./tests/test-export-flags.js",
+    "test:sync": "node ./tests/test-sync.js",
+    "test:alpha-e2e": "node ./tests/test-alpha-e2e.js",
+    "test": "npm run test:bundle && npm run test:plan && npm run test:review",
+    "test:e2e": "npm run test:export-flags && npm run test:sync && npm run test:alpha-e2e"
   },
   "dependencies": {
     "puppeteer": "^24.42.0"

@@ -4,20 +4,19 @@
 // — bundle is pure file-read-and-write, so this whole file runs in well
 // under a second and is suitable for CI on any host.
 //
-// Each scenario is small and self-contained. Failures print which scenario
-// failed and a diagnostic; the process exits 1 if any scenario fails.
-// Pass `--verbose` to also print the harness internals on success.
-//
 //   node tests/test-bundle.js
 //   npm run test:bundle
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
-
-const REPO_ROOT = path.resolve(__dirname, '..');
-const CLI = path.join(REPO_ROOT, 'cli.js');
+const {
+  REPO_ROOT,
+  scenario,
+  assert,
+  assertEq,
+  runH2v,
+  summary,
+} = require('./_test-harness');
 
 // We parse h2v bundles using the same regex shape `cli.js` uses internally.
 // Duplicated here intentionally so the test is independent of cli.js's
@@ -43,52 +42,6 @@ function parseBundleBlocks(html) {
     blocks.push({ attrs: parseAttrs(m[1]), content: m[2].trim() });
   }
   return blocks;
-}
-
-// =========================================================================
-// Harness
-// =========================================================================
-
-let failures = 0;
-let scenarios = 0;
-const VERBOSE = process.argv.includes('--verbose');
-
-function scenario(name, fn) {
-  scenarios++;
-  try {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h2v-bundle-test-'));
-    try {
-      fn({ tmp });
-      console.log(`  \x1b[32m✓\x1b[0m ${name}`);
-    } finally {
-      try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
-    }
-  } catch (err) {
-    failures++;
-    console.log(`  \x1b[31m✗\x1b[0m ${name}`);
-    console.log(`      ${err.message.replace(/\n/g, '\n      ')}`);
-    if (VERBOSE && err.stack) console.log(err.stack);
-  }
-}
-
-function assert(cond, msg) {
-  if (!cond) throw new Error(msg);
-}
-
-function assertEq(actual, expected, label) {
-  const a = JSON.stringify(actual);
-  const e = JSON.stringify(expected);
-  if (a !== e) throw new Error(`${label}: expected ${e}, got ${a}`);
-}
-
-// Spawn h2v with cwd set to a fresh dir so each scenario's `output/`
-// doesn't collide with the real repo output. Returns { code, stdout, stderr }.
-function runH2v(args, opts = {}) {
-  const r = spawnSync('node', [CLI, ...args], {
-    cwd: opts.cwd || REPO_ROOT,
-    encoding: 'utf-8',
-  });
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
 // =========================================================================
@@ -298,15 +251,4 @@ scenario('empty input set → exit 2', ({ tmp }) => {
     `expected stderr to mention no html files matched: ${JSON.stringify(r.stderr)}`);
 });
 
-// =========================================================================
-// Summary
-// =========================================================================
-
-console.log('');
-if (failures === 0) {
-  console.log(`\x1b[32m${scenarios}/${scenarios} scenarios passed.\x1b[0m`);
-  process.exit(0);
-} else {
-  console.log(`\x1b[31m${failures}/${scenarios} scenarios failed.\x1b[0m`);
-  process.exit(1);
-}
+summary();

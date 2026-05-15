@@ -1,13 +1,15 @@
 name: tests
 
-# Runs h2v's correctness tests on every push to main and on PRs targeting
-# main. Kept separate from docs-check.yml so the two failure signals stay
-# independently legible in the PR UI: docs-check failing means "run npm
-# run docs:sync"; tests failing means "look at the test output."
+# Fast-layer correctness tests. Runs on every push to main and every PR
+# targeting main. Kept separate from docs-check.yml (which only verifies
+# docs/cli.md is in sync) and from tests-e2e.yml (which exports real
+# videos and is slower) so each failure signal stays independently
+# legible in the PR UI.
 #
-# Dependency-free: bundle tests don't need Puppeteer / Chromium (h2v
-# bundle is pure file-read-and-write), and the test harness uses only
-# Node stdlib. No `npm ci` step needed, same as docs-check.
+# Dependency-free: covers `h2v bundle` (file-read-and-write only),
+# `h2v export --dry-run` (the pre-browser pipeline), and `h2v review
+# --no-open` (pure HTML generation). No `npm ci` step needed; everything
+# uses Node stdlib.
 
 on:
   push:
@@ -16,11 +18,11 @@ on:
     branches: [main]
 
 jobs:
-  test-bundle:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm run test:bundle
+      - run: npm test

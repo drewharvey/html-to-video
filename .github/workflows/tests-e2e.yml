@@ -1,0 +1,40 @@
+name: tests-e2e
+
+# End-to-end correctness tests. Each scenario in this layer runs `h2v
+# export` for real (Puppeteer + bundled Chrome + ffmpeg) and asserts on
+# the produced video files. Slower than the dependency-free tests in
+# tests.yml — ~2 minutes per run vs ~30 seconds — so it lives in its own
+# workflow file with its own status check on PRs.
+#
+# Required on host: Puppeteer's bundled Chrome (downloaded by `npm ci`)
+# and ffmpeg + ffprobe (preinstalled on `ubuntu-latest` runners).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Cache the Puppeteer-bundled Chrome between runs. The first install
+      # downloads ~150 MB; subsequent runs reuse the cached binary, which
+      # cuts ~25 s off the install step.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/puppeteer
+          key: puppeteer-cache-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            puppeteer-cache-${{ runner.os }}-
+      - run: npm ci
+      # Sanity-check that ffmpeg is on PATH (it should be on ubuntu-latest
+      # by default, but explicit failure here is clearer than ffprobe
+      # failing inside a test).
+      - run: ffmpeg -version | head -1 && ffprobe -version | head -1
+      - run: npm run test:e2e
