@@ -90,6 +90,29 @@ node tests/bench-parallel.js B        # only mode B
 
 Result on this codebase (sandbox ARM Linux Chromium, K ∈ {1, 2, 4}): Mode A is catastrophic — K=2 made each capture ~16× slower (per-shot 78 ms → 1399 ms). Mode B is near-linear: K=4 hits 3.42× of ideal (≈85% efficiency). That's why the `--concurrency` implementation in `cli.js` uses one browser per worker, never multiple pages in one browser. If you change that, re-run this benchmark first.
 
+## test-bundle.js
+
+Correctness tests for `h2v bundle` — the inverse of bundle-mode export, which takes a list of standalone HTML animations (and/or existing bundles) and emits a single bundle HTML file with ANIMATION_START / ANIMATION_END markers. Unlike the bench scripts above, this is pass/fail, not perf.
+
+```
+npm run test:bundle
+# or
+node tests/test-bundle.js
+```
+
+Eight scenarios, all dependency-free (no Chromium, no Puppeteer — `h2v bundle` only reads and writes files):
+
+1. **Round-trip equivalence** — `h2v bundle demo/animations/` produces a bundle whose `{id, capture_duration, viewport, themes}` set matches `demo/bundle.html`. Catches almost any structural regression and continuously enforces that `demo/animations/` and `demo/bundle.html` stay in sync.
+2. **Standalone file metadata** — `h2v-duration` / `h2v-viewport` / `h2v-themes` metas land in the right marker attributes.
+3. **Missing duration fallback** — file without `h2v-duration` falls back to `DEFAULTS.duration` AND emits a stderr note.
+4. **Decompose + merge** — input file that's already a bundle is exploded into its inner animations and merges with sibling standalone files.
+5. **Duplicate ids** — two files sharing a basename across different dirs error out with exit 2 and both paths named in stderr.
+6. **Default output path (single dir)** — `h2v bundle anims/` lands at `output/anims.html`.
+7. **Default output path (mixed inputs)** — `h2v bundle a.html b.html` lands at `output/bundle.html`.
+8. **Empty input set** — `h2v bundle empty-dir/` exits 2 with a clear message.
+
+This test runs in well under a second and is invoked by `.github/workflows/tests.yml` on every push to main and every PR — failure blocks merge.
+
 ## bench-alpha-codec.sh
 
 Compares every alpha-capable codec against the same set of captured frames. Run this whenever you're considering a change to the `--alpha` default codec — it produces the input data the call needs.

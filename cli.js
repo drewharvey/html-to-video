@@ -131,7 +131,11 @@ USAGE
                                     4K 60fps MP4 (h264); every output
                                     parameter is configurable.
   h2v review [<paths...>] [flags]   Build a single HTML page that previews
-                                    every animation at the given paths
+                                    every animation at the given paths.
+  h2v bundle [<paths...>] [flags]   Assemble a list of standalone animation
+                                    HTML files (and/or existing bundles)
+                                    into a single bundle HTML file with
+                                    ANIMATION_START / ANIMATION_END markers.
   h2v --help
   h2v --version
 
@@ -293,6 +297,19 @@ REVIEW FLAGS
                       flag of the same name; cannot be combined with
                       positional path arguments.
 
+BUNDLE FLAGS
+  --out <path>        Write the bundle to this path. Defaults to
+                      output/<dirname>.html when the single positional arg
+                      is a directory (e.g. \`h2v bundle anims/\` →
+                      output/anims.html), otherwise output/bundle.html.
+
+  Per-animation metadata is read from each input's <meta name="h2v-..."> tags
+  (duration, viewport, themes) and propagated to marker attributes.
+  Animation id is derived from filename basename. Input files that already
+  contain ANIMATION_START markers are decomposed and merged; this lets you
+  combine existing bundles with new standalone clips in one command.
+  Duplicate ids (after collection) are an error.
+
 SHARED FLAGS
   -h, --help          Show this help.
   --version           Show version.
@@ -341,7 +358,7 @@ function parseArgs(argv) {
   }
 
   const [command, ...rest] = args;
-  if (command !== 'export' && command !== 'review') {
+  if (command !== 'export' && command !== 'review' && command !== 'bundle') {
     console.error(`error: unknown command: ${command}`);
     console.error(`Did you mean: h2v export ${args.join(' ')} ?`);
     process.exit(2);
@@ -1779,6 +1796,177 @@ async function runReview(paths, opts) {
 }
 
 // =========================================================================
+// Bundle command
+// =========================================================================
+//
+// `h2v bundle` is the inverse of the bundle path through `h2v export`. It
+// reads a list of standalone HTML animations (and/or existing bundles),
+// extracts each animation's metadata, and writes one bundle HTML file with
+// ANIMATION_START / ANIMATION_END markers that `parseBundleFrames` already
+// knows how to read on the export side. Round-trip property: bundling
+// `demo/animations/` should produce a bundle semantically equivalent to
+// the committed `demo/bundle.html` — same {id, capture_duration, viewport,
+// themes, content} set per block. The bundle test (`tests/test-bundle.js`)
+// enforces this.
+
+function collectBundleAnimations(inputs) {
+  const animations = [];
+  for (const input of inputs) {
+    const raw = fs.readFileSync(input, 'utf-8');
+    if (detectMode(raw) === 'bundle') {
+      // Existing bundle: decompose so each inner animation becomes its own
+      // entry in the output bundle. parseBundleFrames already validates
+      // marker shape, so any malformed input errors out here with a clear
+      // file:line-ish message rather than producing a broken output bundle.
+      const frames = parseBundleFrames(raw, input);
+      for (const frame of frames) {
+        animations.push({
+          id: frame.id,
+          captureDuration: frame.durationSeconds,
+          viewport: frame.viewport,
+          themes: frame.declaredThemes,
+          content: frame.html,
+          // sourcePath includes "#<id>" for bundle entries so duplicate-id
+          // error messages name the specific animation within the bundle.
+          sourcePath: `${input}#${frame.id}`,
+        });
+      }
+    } else {
+      // Standalone file: id from filename basename, metadata from <meta>
+      // tags. Missing duration meta is non-fatal — we fall back to the
+      // run-wide default and log a note so the user sees the fallback.
+      const id = path.basename(input, '.html');
+      let durationS = extractMetaDuration(raw);
+      if (durationS == null) {
+        console.error(
+          `note: ${input}: no h2v-duration meta, using default ${DEFAULTS.duration}s`
+        );
+        durationS = DEFAULTS.duration;
+      }
+      animations.push({
+        id,
+        captureDuration: durationS,
+        viewport: extractViewport(raw),  // null if absent → omitted from marker
+        themes: extractDeclaredThemes(raw),  // [] if absent → omitted from marker
+        content: raw,
+        sourcePath: input,
+      });
+    }
+  }
+  return animations;
+}
+
+function renderBundle(animations) {
+  // ISO date in the header lets future readers tell when an existing
+  // bundle was generated without needing git history. No time-of-day —
+  // we want this stable across re-bundles on the same day for diff-ability.
+  const today = new Date().toISOString().slice(0, 10);
+  const parts = [
+    `<!-- Generated by h2v bundle on ${today}. See docs/authoring.md. -->`,
+    '',
+  ];
+  for (const anim of animations) {
+    const attrs = [
+      `id="${anim.id}"`,
+      `capture_duration="${anim.captureDuration}s"`,
+    ];
+    // viewport and themes are optional in the marker — only emit them
+    // when present in the source so a bundle of plain files stays clean
+    // (no `viewport=""` or `themes=""` clutter).
+    if (anim.viewport) {
+      attrs.push(`viewport="${anim.viewport.w}x${anim.viewport.h}"`);
+    }
+    if (anim.themes && anim.themes.length > 0) {
+      attrs.push(`themes="${anim.themes.join(',')}"`);
+    }
+    parts.push(`<!-- ===== ANIMATION_START ${attrs.join(' ')} ===== -->`);
+    parts.push(anim.content);
+    parts.push(`<!-- ===== ANIMATION_END id="${anim.id}" ===== -->`);
+    parts.push('');
+  }
+  return parts.join('\n');
+}
+
+function defaultBundleOutPath(paths, cwd) {
+  // Single-dir input → derive bundle name from the directory:
+  //   h2v bundle anims/    → output/anims.html
+  // Anything else (mixed args, multiple dirs, no args) → output/bundle.html.
+  if (paths.length === 1) {
+    const abs = path.resolve(cwd, paths[0]);
+    let stat;
+    try { stat = fs.statSync(abs); } catch { stat = null; }
+    if (stat && stat.isDirectory()) {
+      const dirName = path.basename(abs);
+      return path.resolve(cwd, DEFAULTS.outDir, `${dirName}.html`);
+    }
+  }
+  return path.resolve(cwd, DEFAULTS.outDir, 'bundle.html');
+}
+
+async function runBundle(paths, opts) {
+  const cwd = process.cwd();
+  const inputs = discoverInputs(paths, cwd);
+
+  if (inputs.length === 0) {
+    console.error('error: no .html files matched. Pass paths or run from a directory containing animations.');
+    process.exit(2);
+  }
+
+  let animations;
+  try {
+    animations = collectBundleAnimations(inputs);
+  } catch (err) {
+    console.error(`error: ${err.message}`);
+    process.exit(2);
+  }
+
+  if (animations.length === 0) {
+    console.error('error: no animations to bundle.');
+    process.exit(2);
+  }
+
+  // Validate uniqueness of ids. Collisions are most likely from two
+  // standalone files sharing a basename across different directories, or
+  // from a standalone file colliding with an inner id from a decomposed
+  // bundle. The error names both source paths so the user can decide
+  // which to rename.
+  const seenIds = new Map();
+  for (const anim of animations) {
+    if (seenIds.has(anim.id)) {
+      console.error(
+        `error: duplicate animation id "${anim.id}":\n` +
+        `  ${seenIds.get(anim.id)}\n` +
+        `  ${anim.sourcePath}`
+      );
+      process.exit(2);
+    }
+    seenIds.set(anim.id, anim.sourcePath);
+  }
+
+  const outPath = opts.outOverride
+    ? path.resolve(cwd, opts.outOverride)
+    : defaultBundleOutPath(paths, cwd);
+
+  // Refuse to clobber a directory at the output path. (Overwriting an
+  // existing file is fine — h2v export does the same.)
+  if (fs.existsSync(outPath)) {
+    const stat = fs.statSync(outPath);
+    if (stat.isDirectory()) {
+      console.error(`error: --out points to a directory: ${outPath}`);
+      process.exit(2);
+    }
+  }
+
+  const bundleHtml = renderBundle(animations);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, bundleHtml);
+
+  console.log(
+    `Wrote bundle: ${relativeToHere(outPath)} (${animations.length} animation${animations.length === 1 ? '' : 's'})`
+  );
+}
+
+// =========================================================================
 // Memory budget heuristic
 // =========================================================================
 //
@@ -1956,6 +2144,9 @@ async function main() {
 
   if (opts.command === 'review') {
     return runReview(paths, opts);
+  }
+  if (opts.command === 'bundle') {
+    return runBundle(paths, opts);
   }
 
   resolveExportOpts(opts);

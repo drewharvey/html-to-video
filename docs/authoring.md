@@ -123,6 +123,28 @@ Other attributes are tolerated and ignored. The legacy form `FRAME_START` / `FRA
 
 The HTML inside each pair of markers is loaded as a complete document. Each animation gets its own browser context — there's no shared state. `<style>`, `<script>`, viewport, etc. are per-animation.
 
+### Assembling a bundle from standalone files
+
+`h2v bundle` is the inverse of bundle-mode export: it takes standalone animation files (and/or existing bundles) and emits a single bundle HTML file. The metadata flow is intentionally lossless — each standalone file's `<meta name="h2v-…">` tags become the corresponding marker attributes, and existing bundles are decomposed and merged.
+
+```bash
+# A directory of standalone animations → one bundle
+h2v bundle anims/
+# → output/anims.html (12 ANIMATION_START blocks)
+
+# Mixed input: combine an existing bundle with a new clip
+h2v bundle existing.html new-clip.html --out merged.html
+
+# Explicit output path
+h2v bundle anims/ --out my-collection.html
+```
+
+The id for each block is derived from the source file's basename (`01-intro.html` → `id="01-intro"`); for inputs that are already bundles, the inner marker's id is preserved. Duplicate ids across the merged set are an error — both source paths are named in the message so you can decide which to rename.
+
+If a standalone file has no `<meta name="h2v-duration">`, the bundle falls back to the run-wide default duration and prints a `note:` to stderr so you see the fallback rather than discovering it later at export time.
+
+A bundle produced this way is interchangeable with one authored by hand: `h2v export <bundle>` produces the same per-animation videos in `output/<bundle-base>/<animation-id>.<ext>` regardless of how the bundle was assembled.
+
 ---
 
 ## Hiding UI controls during recording

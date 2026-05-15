@@ -13,7 +13,8 @@
   "scripts": {
     "export": "node ./cli.js export",
     "docs:sync": "node ./scripts/sync-help-docs.js",
-    "docs:check": "node ./scripts/sync-help-docs.js --check"
+    "docs:check": "node ./scripts/sync-help-docs.js --check",
+    "test:bundle": "node ./tests/test-bundle.js"
   },
   "dependencies": {
     "puppeteer": "^24.42.0"

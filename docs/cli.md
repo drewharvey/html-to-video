@@ -21,7 +21,11 @@ USAGE
                                     4K 60fps MP4 (h264); every output
                                     parameter is configurable.
   h2v review [<paths...>] [flags]   Build a single HTML page that previews
-                                    every animation at the given paths
+                                    every animation at the given paths.
+  h2v bundle [<paths...>] [flags]   Assemble a list of standalone animation
+                                    HTML files (and/or existing bundles)
+                                    into a single bundle HTML file with
+                                    ANIMATION_START / ANIMATION_END markers.
   h2v --help
   h2v --version
 
@@ -182,6 +186,19 @@ REVIEW FLAGS
                       of from a file path. Same semantics as the export
                       flag of the same name; cannot be combined with
                       positional path arguments.
+
+BUNDLE FLAGS
+  --out <path>        Write the bundle to this path. Defaults to
+                      output/<dirname>.html when the single positional arg
+                      is a directory (e.g. `h2v bundle anims/` →
+                      output/anims.html), otherwise output/bundle.html.
+
+  Per-animation metadata is read from each input's <meta name="h2v-..."> tags
+  (duration, viewport, themes) and propagated to marker attributes.
+  Animation id is derived from filename basename. Input files that already
+  contain ANIMATION_START markers are decomposed and merged; this lets you
+  combine existing bundles with new standalone clips in one command.
+  Duplicate ids (after collection) are an error.
 
 SHARED FLAGS
   -h, --help          Show this help.

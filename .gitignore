@@ -20,3 +20,10 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Claude Code: local/transient state. Project-shared config under .claude/
+# (settings.json, commands/, agents/, hooks/, skills/) is intentionally NOT
+# ignored — commit those when they exist.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/.cache/
