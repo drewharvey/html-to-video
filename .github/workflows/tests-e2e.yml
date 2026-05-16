@@ -23,6 +23,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      # Install ffmpeg. It was preinstalled on the older `ubuntu-22.04`
+      # runner image but is NOT on `ubuntu-24.04` (the current
+      # ubuntu-latest), so we install it explicitly. apt-get takes ~5-10s
+      # on the runner — small enough to do unconditionally.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       # Cache the Puppeteer-bundled Chrome between runs. The first install
       # downloads ~150 MB; subsequent runs reuse the cached binary, which
       # cuts ~25 s off the install step.
@@ -33,8 +38,8 @@ jobs:
           restore-keys: |
             puppeteer-cache-${{ runner.os }}-
       - run: npm ci
-      # Sanity-check that ffmpeg is on PATH (it should be on ubuntu-latest
-      # by default, but explicit failure here is clearer than ffprobe
-      # failing inside a test).
-      - run: ffmpeg -version | head -1 && ffprobe -version | head -1
+      # Hard-fail if ffmpeg or ffprobe aren't on PATH. `command -v` exits
+      # 0 if found, 1 otherwise — actually failing the step instead of
+      # being silently absorbed by `head` like the previous check was.
+      - run: command -v ffmpeg && command -v ffprobe
       - run: npm run test:e2e
