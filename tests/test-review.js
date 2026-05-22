@@ -187,4 +187,79 @@ scenario('per-file viewport meta drives iframe sizing in review', ({ tmp }) => {
   assertEq(anims[0].viewport, { w: 1080, h: 1920 }, 'viewport object');
 });
 
+// ---------------------------------------------------------------------------
+// 8. Live mode (no --out): single-file animations are loaded via
+//    iframe.src = "file://…" so a browser refresh re-fetches from disk.
+//    Each entry should carry `src` instead of `html` — verifies the
+//    iterate-edit-refresh workflow is wired up correctly.
+// ---------------------------------------------------------------------------
+scenario('default (no --out): single file → src=file:// (live mode)', ({ tmp }) => {
+  const file = path.join(tmp, 'clip.html');
+  fs.writeFileSync(file,
+    '<html><head><meta name="h2v-duration" content="1s"></head><body>x</body></html>');
+  // No --out → temp file path; --no-open prevents the cleanup wait loop.
+  const r = runH2v(['review', file, '--no-open']);
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  // Pull the temp path out of stdout.
+  const m = r.stdout.match(/Review page \([^)]+\): (\S+)/);
+  assert(m, `expected "Review page (...): <path>" in stdout: ${r.stdout}`);
+  const outPath = m[1];
+
+  const anims = extractAnimations(fs.readFileSync(outPath, 'utf-8'));
+  assertEq(anims.length, 1, 'animation count');
+  assert(typeof anims[0].src === 'string', `live entry must carry src; got ${JSON.stringify(anims[0])}`);
+  assert(anims[0].src.startsWith('file://'), `src must be a file:// URL; got ${anims[0].src}`);
+  assert(anims[0].src.endsWith('/clip.html'), `src must point at the source file; got ${anims[0].src}`);
+  // html is the inline-mode payload; live entries shouldn't carry it.
+  assert(!('html' in anims[0]), `live entry must not duplicate html; got ${JSON.stringify(anims[0])}`);
+
+  // Cleanup — the harness wipes tmp/, but the review page lives in os.tmpdir().
+  try { fs.unlinkSync(outPath); } catch { /* ignore */ }
+});
+
+// ---------------------------------------------------------------------------
+// 9. Live mode: bundle frames have no individual file on disk, so they
+//    must still inline as srcdoc (carry `html`, not `src`).
+// ---------------------------------------------------------------------------
+scenario('default (no --out): bundle frames stay inlined (no individual files)', () => {
+  const r = runH2v(['review', 'demo/bundle.html', '--no-open']);
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const m = r.stdout.match(/Review page \([^)]+\): (\S+)/);
+  assert(m, `expected "Review page (...): <path>" in stdout: ${r.stdout}`);
+  const outPath = m[1];
+
+  const anims = extractAnimations(fs.readFileSync(outPath, 'utf-8'));
+  assertEq(anims.length, 12, 'animation count');
+  for (const a of anims) {
+    assert(typeof a.html === 'string' && a.html.length > 0,
+      `bundle frame ${a.id} must carry inlined html in live mode; got ${JSON.stringify(a).slice(0, 200)}`);
+    assert(!('src' in a),
+      `bundle frame ${a.id} must not carry src (no file on disk); got ${JSON.stringify(a).slice(0, 200)}`);
+  }
+
+  try { fs.unlinkSync(outPath); } catch { /* ignore */ }
+});
+
+// ---------------------------------------------------------------------------
+// 10. --out mode forces inlining for every entry — even single-file
+//     animations that would use file:// in live mode. The saved page
+//     must be portable: no entry carries a `src` field that would
+//     reference an unreachable path on someone else's machine.
+// ---------------------------------------------------------------------------
+scenario('--out: single file is inlined as srcdoc (portable)', ({ tmp }) => {
+  const file = path.join(tmp, 'clip.html');
+  fs.writeFileSync(file,
+    '<html><head><meta name="h2v-duration" content="1s"></head><body>x</body></html>');
+  const out = path.join(tmp, 'review.html');
+  const r = runH2v(['review', file, '--no-open', '--out', out]);
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const anims = extractAnimations(fs.readFileSync(out, 'utf-8'));
+  assertEq(anims.length, 1, 'animation count');
+  assert(typeof anims[0].html === 'string', `--out entry must carry inlined html`);
+  assert(!('src' in anims[0]),
+    `--out entry must NOT carry src (defeats portability); got ${JSON.stringify(anims[0]).slice(0, 200)}`);
+});
+
 summary();

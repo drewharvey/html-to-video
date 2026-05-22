@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { spawn, spawnSync } = require('child_process');
 
 const PKG = require('./package.json');
@@ -287,7 +288,11 @@ EXPORT FLAGS
 
 REVIEW FLAGS
   --out <path>        Write the review page to this path instead of a
-                      tmpfile (implies --keep).
+                      tmpfile (implies --keep). Inlines each animation
+                      into the page (srcdoc) so the saved file is
+                      portable. Without --out, single-file animations
+                      are loaded via file:// URLs so a browser refresh
+                      picks up edits to the source files.
   --no-open           Don't auto-open the browser; just print the path.
                       (No auto-cleanup either.)
   --keep              Don't delete the temp file on exit. (Implied by
@@ -1381,9 +1386,16 @@ function ffmpegStitch(captureDir, outPath, opts) {
 // Review command
 // =========================================================================
 //
-// Build a single self-contained HTML page that embeds every animation
-// from the given paths as <iframe srcdoc>. Default: write to a tmpfile,
-// open it in the browser, wait for SIGINT, delete on exit.
+// Build a single HTML page that embeds every animation from the given
+// paths. Two serialization modes:
+//   inline=false (default, tmpfile path) — single-file animations are
+//     loaded via <iframe src="file://…"> so a browser refresh re-fetches
+//     from disk; bundle frames have no individual file and fall back to
+//     srcdoc inlining.
+//   inline=true (--out path) — every animation is inlined via
+//     <iframe srcdoc>, producing a self-contained portable page.
+// Default flow: write to a tmpfile, open in browser, wait for SIGINT,
+// delete on exit.
 
 function safeJsonForScript(value) {
   // JSON.stringify produces literal "</script>" inside any embedded
@@ -1393,7 +1405,23 @@ function safeJsonForScript(value) {
   return JSON.stringify(value, null, 2).replace(/<\/(?=[a-zA-Z!])/g, '<\\/');
 }
 
-function buildReviewHtml(animations) {
+function buildReviewHtml(animations, { inline }) {
+  // In live mode (inline=false), drop animations[].html for entries that
+  // have a filePath — those will be loaded via iframe.src. Bundle frames
+  // (filePath: null) still need their html inlined as srcdoc.
+  const serialized = animations.map((a) => {
+    const base = {
+      id: a.id,
+      title: a.title,
+      source: a.source,
+      viewport: a.viewport,
+    };
+    if (!inline && a.filePath) {
+      return { ...base, src: pathToFileURL(a.filePath).href };
+    }
+    return { ...base, html: a.html };
+  });
+
   const count = animations.length;
   const countLabel = `${count} animation${count === 1 ? '' : 's'}`;
   return `<!DOCTYPE html>
@@ -1482,7 +1510,27 @@ main {
 </header>
 <main id="cards"></main>
 <script>
-const ANIMATIONS = ${safeJsonForScript(animations)};
+const ANIMATIONS = ${safeJsonForScript(serialized)};
+
+function loadInto(iframe, a) {
+  if (a.src) {
+    iframe.src = a.src;
+  } else {
+    iframe.srcdoc = a.html;
+  }
+}
+
+function reload(iframe, a) {
+  if (a.src) {
+    // Setting iframe.src to the same URL is a no-op in some browsers;
+    // bouncing through about:blank forces a fresh fetch from disk.
+    iframe.src = 'about:blank';
+    requestAnimationFrame(() => { iframe.src = a.src; });
+  } else {
+    // Reassigning srcdoc always re-parses the inlined HTML.
+    iframe.srcdoc = a.html;
+  }
+}
 
 const main = document.getElementById('cards');
 ANIMATIONS.forEach((a) => {
@@ -1502,7 +1550,7 @@ ANIMATIONS.forEach((a) => {
   iframe.setAttribute('loading', 'lazy');
   iframe.style.setProperty('--anim-w', a.viewport.w);
   iframe.style.setProperty('--anim-h', a.viewport.h);
-  iframe.srcdoc = a.html;
+  loadInto(iframe, a);
   head.append(name, source);
   card.append(head, iframe);
   main.appendChild(card);
@@ -1510,8 +1558,7 @@ ANIMATIONS.forEach((a) => {
 
 document.getElementById('resetAll').addEventListener('click', () => {
   document.querySelectorAll('.card').forEach((card, i) => {
-    const iframe = card.querySelector('iframe');
-    iframe.srcdoc = ANIMATIONS[i].html;
+    reload(card.querySelector('iframe'), ANIMATIONS[i]);
   });
 });
 </script>
@@ -1683,6 +1730,9 @@ function buildReviewAnimations(inputs) {
           source: `${inputBase}/${frame.id}`,
           html: frame.html,
           viewport: frame.viewport || DEFAULT_VIEWPORT,
+          // Bundle frames are slices of a parent file with no individual
+          // path on disk. In live mode they fall back to srcdoc inlining.
+          filePath: null,
         });
       }
     } else {
@@ -1692,6 +1742,9 @@ function buildReviewAnimations(inputs) {
         source: inputBase,
         html: text,
         viewport: extractViewport(text) || DEFAULT_VIEWPORT,
+        // Absolute path so the review HTML (typically in os.tmpdir())
+        // can address the source file via a file:// URL.
+        filePath: path.resolve(inputPath),
       });
     }
   }
@@ -1731,9 +1784,11 @@ async function runReview(paths, opts) {
     process.exit(1);
   }
 
-  const html = buildReviewHtml(animations);
-
   const isTempFile = !opts.outOverride;
+  // --out → inline all animations as srcdoc so the saved page is
+  // portable. Default tmpfile → live mode: single-file iframes point at
+  // file:// URLs so a browser refresh picks up edits to source files.
+  const html = buildReviewHtml(animations, { inline: !isTempFile });
   const outPath = isTempFile
     ? path.join(os.tmpdir(), `h2v-review-${Date.now()}.html`)
     : path.resolve(cwd, opts.outOverride);

@@ -177,7 +177,11 @@ EXPORT FLAGS
 
 REVIEW FLAGS
   --out <path>        Write the review page to this path instead of a
-                      tmpfile (implies --keep).
+                      tmpfile (implies --keep). Inlines each animation
+                      into the page (srcdoc) so the saved file is
+                      portable. Without --out, single-file animations
+                      are loaded via file:// URLs so a browser refresh
+                      picks up edits to the source files.
   --no-open           Don't auto-open the browser; just print the path.
                       (No auto-cleanup either.)
   --keep              Don't delete the temp file on exit. (Implied by
@@ -403,7 +407,7 @@ Scaling isn't perfectly linear — CPU contention slows individual captures slig
 
 ## `h2v review` — preview many animations at once
 
-`h2v review` builds a single self-contained HTML page that embeds every animation at the given paths as `<iframe>`s, with a Reload-all button, per-card Replay, and a global light/dark toggle. Useful for inspecting a directory of animations before exporting them, or for sharing one file with someone who doesn't have h2v installed.
+`h2v review` builds a single HTML page that embeds every animation at the given paths as `<iframe>`s, with a Reset-all button. Useful for inspecting a directory of animations before exporting them, or for sharing one file with someone who doesn't have h2v installed.
 
 ```
 h2v review ./anims        # default: write to /tmp, open in browser, Ctrl-C to delete
@@ -415,6 +419,14 @@ Default behavior:
 1. Write the page to a tmpfile (`os.tmpdir()/h2v-review-<timestamp>.html`).
 2. Open it in your default browser (`open` / `xdg-open` / `start` depending on platform).
 3. Print `Press Ctrl-C to close` and wait. On `SIGINT` / `SIGTERM`, delete the tmpfile and exit.
+
+### Live mode vs portable mode
+
+By default (no `--out`), single-file animations are loaded via `<iframe src="file://…">` pointing at the source on disk — so when you edit an animation and refresh the browser, the iframe picks up the new content. This makes the review page the durable visual surface for an iterate-edit-refresh loop: keep one tab open, edit files in your editor, hit ⌘R.
+
+When `--out <path>` is passed, h2v switches to **portable mode**: every animation is inlined into the page (`<iframe srcdoc>`), the file is self-contained, and you can move or send it to someone who doesn't have the source files. The trade-off is that refresh no longer reflects edits — the saved page is a frozen snapshot.
+
+Bundle frames (animations inside a single `ANIMATION_START` / `ANIMATION_END`-marked bundle file) have no individual file on disk, so they always inline as srcdoc — even in live mode. To refresh those after edits, re-run `h2v review <bundle>`.
 
 The `data-h2v-recording` and `data-h2v-hide` hooks are **not** applied during review — controls in the embedded animations stay visible and interactive.
 
