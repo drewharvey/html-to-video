@@ -190,6 +190,60 @@ Neither attribute is set during `h2v review` (the inspection mode) — controls 
 
 ---
 
+## Seek hook — frame-perfect recording (optional, advanced)
+
+By default h2v records an animation by **playing it** — it slows the page's clocks by a factor so screenshots can keep up, then encodes the frames back at real speed (see [internals.md](internals.md)). That works for any HTML and requires nothing from the page, but recording wall-time is `duration × slowdown`, and the result depends on timer/clock fidelity.
+
+If your page can express its scene as a **pure function of time**, you can opt into the **seek driver** instead, and h2v will scrub it frame-by-frame: frame-perfect, deterministic, and with no slowdown wall-time penalty (recording is just N screenshots). This is purely additive — like `data-h2v-hide`, it's a hook the page *may* expose; h2v auto-detects it and falls back to the normal play path if it's absent.
+
+### The contract
+
+Expose a single function on `window`:
+
+```js
+// Set the ENTIRE scene to its state at `ms`. Must be deterministic —
+// the same `ms` always yields identical DOM — and safe to call in any
+// order, any number of times.
+window.seek = function (ms) { /* render the scene at ms */ };
+```
+
+And honor one input flag that h2v sets **before your scripts run**:
+
+```js
+// h2v sets window.__SCRUB__ = true before page load. When it's set, do
+// NOT autoplay — render frame 0 and wait to be driven by seek().
+if (!window.__SCRUB__) {
+  // normal autoplay for human preview in a browser
+}
+```
+
+That's the whole contract. h2v detects the page is seek-aware by the presence of `window.seek` (a function), so there's nothing else to declare — duration and viewport still come from the [`h2v-duration`](#meta-nameh2v-duration--capture-duration) / [`h2v-viewport`](#meta-nameh2v-viewport--design-viewport) meta tags as usual.
+
+### What "pure function of time" requires
+
+The seek driver works by setting `seek(t)` then screenshotting, for each frame `t`. For that to be correct, every time-varying visual must be recomputed from `ms` on demand — which rules out the mechanisms a "played" animation leans on:
+
+- **No CSS `@keyframes` / `transition:` for choreography.** Those advance on the browser's own clock, which the seek driver never advances. (Hover/focus transitions on hidden controls are fine — they're not part of the captured scene.) Interpolate in JS and write inline styles instead.
+- **No `setTimeout` / `setInterval` for timing.** Phase boundaries become conditionals on `ms` (e.g. `if (ms >= 3200) …`).
+- **No reads of wall-clock or unseeded randomness** (`Date.now()`, `performance.now()`, bare `Math.random()`). Same `ms` must always produce identical pixels.
+
+If that's not how your page is built, don't add the hook — the default play path records it correctly as-is. The seek hook is for animations authored as timelines (a runtime that maps `ms → scene state`), not for retrofitting onto wall-clock-driven pages.
+
+### How to tell which driver ran
+
+`h2v export` logs the driver per animation:
+
+```
+[my-clip] 4s × 60fps = 240 frames
+    driver: seek (frame-perfect, no slowdown)
+```
+
+vs. `driver: slowdown 6×` for the play path. If you added the hook but see `slowdown`, the page isn't being detected — check that `window.seek` is a function at load time and that `__SCRUB__` actually suppresses autoplay.
+
+A worked fixture lives at [`../tests/seek-test.html`](../tests/seek-test.html).
+
+---
+
 ## Theming
 
 Optional. Declare available themes once; h2v can record one video per theme.

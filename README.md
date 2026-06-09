@@ -78,6 +78,8 @@ Full reference: [`docs/authoring.md`](docs/authoring.md).
 
 To capture frames reliably at high resolution, h2v slows the page's clocks during recording by a factor `S` (default 6, `--slowdown`), then stitches the captured frames back at the original fps. Recording wall time ≈ animation duration × `S`.
 
+Pages that expose their scene as a pure function of time (a `window.seek(ms)` hook) are auto-detected and recorded by **scrubbing** instead — frame-perfect and with no slowdown wall-time penalty. This is opt-in per page; everything else uses the slowdown path above.
+
 Why this approach, and the failed alternatives behind it: [`docs/internals.md`](docs/internals.md).
 
 ---

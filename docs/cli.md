@@ -435,8 +435,8 @@ The `data-h2v-recording` and `data-h2v-hide` hooks are **not** applied during re
 ## Limitations
 
 - **No recursion.** Directory expansion only finds `*.html` at the top level of the named directory.
-- **Single-shot per page.** Each animation is recorded by playing through once from t=0. If your animation loops, the recording stops at the configured duration regardless.
-- **Recording is slower than real-time.** With the default `--slowdown 6`, recording takes 6× the animation's run time. A 30-second animation needs three minutes of wall time.
+- **Single-shot per page.** Each animation is recorded as a single pass over `[0, duration)`. If your animation loops, the recording stops at the configured duration regardless.
+- **Recording is slower than real-time (slowdown path).** With the default `--slowdown 6`, recording takes 6× the animation's run time — a 30-second animation needs three minutes of wall time. This applies to the default play driver; pages that expose a `window.seek(ms)` hook are auto-detected and scrubbed instead, which has no slowdown penalty (recording ≈ N screenshots) and ignores `--slowdown`. See [authoring.md](authoring.md#seek-hook--frame-perfect-recording-optional-advanced) for the seek contract.
 - **Web Workers, WebSockets, and `fetch` are not slowed.** The shim only wraps `setTimeout` / `setInterval` / `performance.now` / `Date.now` / `requestAnimationFrame` on the main thread. Animations driven by any of those uncommon sources will desync with the rest.
 - **`libx265` availability** depends on the local ffmpeg build. Homebrew, official Windows builds, and current `apt install ffmpeg` all include it. If you hit `Unknown encoder 'libx265'`, your ffmpeg was built without it.
 

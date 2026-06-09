@@ -1102,7 +1102,7 @@ const SHIM_SOURCE = `(function(sf) {
 // Recording
 // =========================================================================
 
-async function recordJob(browser, job, opts, capturesRoot) {
+async function recordJob(browser, job, opts, capturesRoot, logPrefix = '    ') {
   const page = await browser.newPage();
   try {
     await page.setViewport({
@@ -1111,44 +1111,76 @@ async function recordJob(browser, job, opts, capturesRoot) {
       deviceScaleFactor: opts.scale,
     });
 
-    // Inject the JS time-slowdown shim. Two paths because Puppeteer treats
-    // the two content-loading modes differently:
+    // Inject the pre-load preamble before any page script runs: the
+    // __SCRUB__ flag plus the JS time-slowdown shim.
+    //
+    //   - `window.__SCRUB__ = true` tells a seek-aware page (one exposing
+    //     `window.seek`) NOT to autoplay — it renders frame 0 and
+    //     waits to be driven by seek(). For every other page it's an inert
+    //     global. It MUST be set before load, but the driver decision can
+    //     only be made after load (we have to probe the page to know if it
+    //     exposes seek). So we set it unconditionally up front and
+    //     pick the driver below — a no-op for play-driven pages.
+    //   - The slowdown shim is only consumed by the play driver. It's
+    //     harmless for seek pages, which use no timers for choreography.
+    //
+    // Two injection paths because Puppeteer treats the content-loading
+    // modes differently:
     //
     //   - For single-file (`page.goto`), the navigation creates a new
-    //     document and `evaluateOnNewDocument` fires the shim before any
-    //     page script runs. Standard pattern.
+    //     document and `evaluateOnNewDocument` fires the preamble before
+    //     any page script runs. Standard pattern.
     //
     //   - For bundles (`page.setContent`), Puppeteer uses
     //     `document.open(); document.write(html); document.close()` on the
     //     existing about:blank — this is NOT a navigation, so
     //     `evaluateOnNewDocument` never fires. Without intervention, the
     //     bundle's scripts call the raw, un-shimmed `setTimeout` /
-    //     `performance.now` / `Date.now` / `requestAnimationFrame`, and
-    //     JS-driven animations run at full real-time speed (6× too fast,
-    //     since the capture loop is paced to slowdown × frame interval).
-    //     CSS is unaffected because `Animation.setPlaybackRate` is set
-    //     separately below.
-    //
-    //     Fix: inject the shim directly into the about:blank window via
-    //     `page.evaluate` before `setContent`. `document.write()` replaces
-    //     the document but not the window, so the shim's wrappers on
-    //     `window.setTimeout` etc. persist into the new content's scope.
+    //     `performance.now` / `Date.now` / `requestAnimationFrame` (and
+    //     never see __SCRUB__). Fix: inject directly into the about:blank
+    //     window via `page.evaluate` before `setContent`. `document.write()`
+    //     replaces the document but not the window, so the preamble's
+    //     wrappers and globals persist into the new content's scope.
+    const scrub = 'window.__SCRUB__ = true;';
     if (job.mode === 'bundle') {
-      await page.evaluate(`(${SHIM_SOURCE})(${opts.slowdown});`);
+      await page.evaluate(`${scrub}(${SHIM_SOURCE})(${opts.slowdown});`);
       await page.setContent(job.bundleHtml, { waitUntil: 'load' });
     } else {
-      await page.evaluateOnNewDocument(`${SHIM_SOURCE}(${opts.slowdown});`);
+      await page.evaluateOnNewDocument(`${scrub}${SHIM_SOURCE}(${opts.slowdown});`);
       await page.goto('file://' + job.inputPath, { waitUntil: 'load' });
     }
 
+    // Driver selection (auto-detect). A page that exposes `window.seek`
+    // is seek-aware: its scene is a pure function of time, so we can scrub
+    // it frame-by-frame — frame-perfect and with no slowdown wall-time
+    // penalty. Everything else uses the play driver (slow the clocks by S,
+    // pace screenshots to match). The probe runs post-load, which is why
+    // __SCRUB__ was injected unconditionally above. The presence of the
+    // function is both the capability signal and the behavioral hook; no
+    // separate metadata global is required (duration/viewport come from the
+    // meta tags h2v already parses pre-launch).
+    const seekable = await page.evaluate(
+      () => typeof window.seek === 'function'
+    );
+    const driver = seekable ? 'seek' : 'play';
+    console.log(
+      `${logPrefix}driver: ${driver === 'seek'
+        ? 'seek (frame-perfect, no slowdown)'
+        : `slowdown ${opts.slowdown}×`}`
+    );
+
     // Slow CSS animations / transitions / Web Animations API entries
-    // proportionally. Must be set after navigation so the timeline exists.
-    const client = await page.target().createCDPSession();
-    await client.send('Animation.enable');
-    if (opts.slowdown !== 1) {
-      await client.send('Animation.setPlaybackRate', {
-        playbackRate: 1 / opts.slowdown,
-      });
+    // proportionally — play driver only. Must be set after navigation so
+    // the timeline exists. The seek driver drives state explicitly and
+    // never advances a clock, so the CDP playback rate is irrelevant to it.
+    if (driver === 'play') {
+      const client = await page.target().createCDPSession();
+      await client.send('Animation.enable');
+      if (opts.slowdown !== 1) {
+        await client.send('Animation.setPlaybackRate', {
+          playbackRate: 1 / opts.slowdown,
+        });
+      }
     }
 
     if (job.theme) {
@@ -1179,20 +1211,49 @@ async function recordJob(browser, job, opts, capturesRoot) {
       ? { type: 'png', omitBackground: opts.alpha }
       : { type: 'jpeg', quality: opts.captureQuality };
 
-    // Pace screenshots at S × frame-interval real ms.
-    const tickMsReal = (1000 / opts.fps) * opts.slowdown;
-    const startReal = Date.now();
-    for (let i = 1; i <= job.totalFrames; i++) {
-      const target = startReal + i * tickMsReal;
-      const wait = target - Date.now();
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-      const fileName = String(i).padStart(4, '0') + '.' + captureExt;
-      await page.screenshot({
-        ...screenshotOpts,
-        path: path.join(captureDir, fileName),
+    if (driver === 'seek') {
+      // Seek driver: ask the page for each frame's exact state, screenshot,
+      // repeat. No clock advances, so there's no pacing sleep — wall time is
+      // just N screenshots. Wait for web fonts first (the play path relies
+      // on the slowdown to give fonts time; the seek path captures frame 0
+      // almost immediately, so we wait explicitly), then a short settle.
+      await page.evaluate(async () => {
+        if (document.fonts) await document.fonts.ready;
       });
-      if (!opts.quietProgress && (i % opts.fps === 0 || i === job.totalFrames)) {
-        process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
+      await new Promise((r) => setTimeout(r, 150));
+      // Frames span [0, duration): tᵢ = i × (1000 / fps), capturing the true
+      // first frame at t=0. On-disk names are 1-based so the sequence
+      // (0001..N) matches ffmpegStitch's `-start_number 1`, same as play.
+      for (let i = 0; i < job.totalFrames; i++) {
+        const t = (i * 1000) / opts.fps;
+        await page.evaluate((ms) => window.seek(ms), t);
+        const fileName = String(i + 1).padStart(4, '0') + '.' + captureExt;
+        await page.screenshot({
+          ...screenshotOpts,
+          path: path.join(captureDir, fileName),
+        });
+        const done = i + 1;
+        if (!opts.quietProgress && (done % opts.fps === 0 || done === job.totalFrames)) {
+          process.stdout.write(`\r    captured ${done}/${job.totalFrames}`);
+        }
+      }
+    } else {
+      // Play driver: pace screenshots at S × frame-interval real ms so the
+      // slowed page advances exactly one target frame-interval per shot.
+      const tickMsReal = (1000 / opts.fps) * opts.slowdown;
+      const startReal = Date.now();
+      for (let i = 1; i <= job.totalFrames; i++) {
+        const target = startReal + i * tickMsReal;
+        const wait = target - Date.now();
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        const fileName = String(i).padStart(4, '0') + '.' + captureExt;
+        await page.screenshot({
+          ...screenshotOpts,
+          path: path.join(captureDir, fileName),
+        });
+        if (!opts.quietProgress && (i % opts.fps === 0 || i === job.totalFrames)) {
+          process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
+        }
       }
     }
     if (!opts.quietProgress) process.stdout.write('\n');
@@ -2173,7 +2234,7 @@ async function runJobsParallel(jobs, opts, capturesRoot, puppeteer, K) {
         if (!job) break;
         const startedAt = Date.now();
         console.log(`[w${idx}] start  ${job.label} ${job.durationSeconds}s × ${opts.fps}fps = ${job.totalFrames} frames`);
-        const captureDir = await recordJob(browser, job, workerOpts, capturesRoot);
+        const captureDir = await recordJob(browser, job, workerOpts, capturesRoot, `[w${idx}] `);
         if (!opts.skipFfmpeg) {
           const outPath = outputPathFor(job, opts);
           await ffmpegStitch(captureDir, outPath, opts);
