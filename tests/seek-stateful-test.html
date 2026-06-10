@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="h2v-duration" content="2s">
+  <meta name="h2v-viewport" content="640x360">
+  <title>h2v seek stateful test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #0b0b0c; }
+    body { display: flex; align-items: center; padding: 28px 40px; }
+    .track { width: 100%; height: 40px; background: #1a1a1d; border: 1px solid #2a2a2d; border-radius: 4px; overflow: hidden; }
+    .fill { height: 100%; width: 0%; background: #f59e0b; }
+  </style>
+</head>
+<body>
+  <div class="track"><div class="fill" id="bar"></div></div>
+  <script>
+    // DELIBERATELY ORDER-DEPENDENT seek(): it carries incremental state
+    // (a step counter) rather than being a pure function of ms. This mirrors
+    // real timeline engines (e.g. animation-kit's) where jumping cold to a
+    // timestamp renders differently than arriving there frame-by-frame.
+    //
+    // The bar's width is driven by the COUNT of forward steps taken, not by
+    // ms directly. So:
+    //   - single-pass record (0,1,2,…): bar advances one notch per frame.
+    //   - a shard that cold-jumps to frame 60: count == 1 → bar nearly empty
+    //     → WRONG, differs from single-pass.
+    //   - a shard that warm-up-replays 0..60 then captures: count == 60 →
+    //     bar correct → matches single-pass.
+    //
+    // So this fixture's sharded output only matches single-worker if h2v
+    // replays the seek prefix before each shard. It's the regression guard
+    // for that warm-up logic in captureSeekRange.
+    const TOTAL = 120; // 2s × 60fps
+    const bar = document.getElementById('bar');
+    let count = 0;
+    let lastMs = -1;
+    function seek(ms) {
+      if (ms > lastMs) count++;
+      lastMs = ms;
+      const w = Math.min(100, (count / TOTAL) * 100);
+      bar.style.width = w + '%';
+    }
+    window.seek = seek;
+    seek(0);
+
+    if (!window.__SCRUB__) {
+      const start = performance.now();
+      (function loop(now) {
+        seek(now - start);
+        if (now - start < 2000) requestAnimationFrame(loop);
+      })(start);
+    }
+  </script>
+</body>
+</html>

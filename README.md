@@ -54,7 +54,7 @@ A worked example: [`demo/`](demo/) contains a 12-animation storyboard exercising
 `h2v --help` prints the full flag list. The main categories:
 
 - **Output quality** — codec, container, capture format and quality, CRF, quality presets
-- **Resolution and frame rate** — viewport, device scale factor, fps
+- **Resolution and frame rate** — fps, viewport, and output resolution. By default output is fit to a 4K box (≤3840×2160, aspect-preserving) regardless of the authored viewport; override with `--scale` (density multiplier) or `--output-height` (specific height, supersampled)
 - **Selection** — theme, duration override
 - **Performance** — parallel concurrency, recording slowdown
 - **Output paths** — output directory, exact filename, dry-run, no-encode
