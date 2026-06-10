@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="h2v-duration" content="2s">
+  <meta name="h2v-viewport" content="640x360">
+  <title>h2v seek test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #0b0b0c; color: #e6e6e8;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    body {
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 28px 40px; gap: 12px;
+    }
+    .header h1 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+    .header p { font-size: 13px; color: #9a9aa1; line-height: 1.5; }
+    .row { display: flex; flex-direction: column; gap: 4px; }
+    .label {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-family: monospace; font-size: 12px;
+    }
+    .label .name { color: #9a9aa1; }
+    .label .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .track {
+      width: 100%; height: 22px;
+      background: #1a1a1d; border: 1px solid #2a2a2d;
+      border-radius: 4px; overflow: hidden;
+    }
+    /* No CSS animations or transitions anywhere — every visual property is
+       set imperatively from seek(ms). That's the seek-driver contract. */
+    .fill { height: 100%; width: 0%; }
+    .fill-1 { background: #4ade80; }
+    .fill-2 { background: #60a5fa; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>h2v seek test</h1>
+    <p>
+      Two bars driven purely by <code>window.seek(ms)</code> — no
+      timers, no CSS animation. Both fill linearly and should read
+      <strong>50&nbsp;%</strong> at the clip midpoint and
+      <strong>100&nbsp;%</strong> at the end. If h2v drove this via the play
+      driver instead of seek, the bars would never move (no autoplay under
+      <code>__SCRUB__</code>), making a mis-detection obvious.
+    </p>
+  </div>
+
+  <div class="row">
+    <div class="label"><span class="name">seek(ms) → linear</span><span class="pct" id="pct-1">0&nbsp;%</span></div>
+    <div class="track"><div class="fill fill-1" id="bar-1"></div></div>
+  </div>
+
+  <div class="row">
+    <div class="label"><span class="name">seek(ms) → ease-in-out</span><span class="pct" id="pct-2">0&nbsp;%</span></div>
+    <div class="track"><div class="fill fill-2" id="bar-2"></div></div>
+  </div>
+
+  <script>
+    const DURATION = 2000; // ms — matches h2v-duration
+
+    // h2v reads duration/viewport from the meta tags; this object is just
+    // for the in-browser scrub-bar preview below.
+    window.__ANIMATION__ = { duration: DURATION, width: 640, height: 360, fps: 60 };
+
+    const bar1 = document.getElementById('bar-1');
+    const bar2 = document.getElementById('bar-2');
+    const pct1 = document.getElementById('pct-1');
+    const pct2 = document.getElementById('pct-2');
+
+    function easeInOut(t) {
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
+
+    // The contract: scene state is a pure function of ms. Same ms always
+    // yields the identical DOM. Safe to call in any order, any number of times.
+    function seek(ms) {
+      const t = Math.max(0, Math.min(1, ms / DURATION));
+      const linear = t * 100;
+      const eased = easeInOut(t) * 100;
+      bar1.style.width = linear + '%';
+      bar2.style.width = eased + '%';
+      pct1.textContent = Math.round(linear) + ' %';
+      pct2.textContent = Math.round(eased) + ' %';
+    }
+    window.seek = seek;
+
+    // Render frame 0 immediately so the first capture (or first browser
+    // paint) is well-defined.
+    seek(0);
+
+    // Human-preview affordance only: when NOT being scrubbed by an exporter,
+    // autoplay once so opening the file in a browser shows motion. h2v sets
+    // window.__SCRUB__ = true before this script runs, which suppresses it.
+    if (!window.__SCRUB__) {
+      const start = performance.now();
+      (function loop(now) {
+        seek(now - start);
+        if (now - start < DURATION) requestAnimationFrame(loop);
+      })(start);
+    }
+  </script>
+</body>
+</html>

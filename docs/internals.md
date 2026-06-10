@@ -66,6 +66,46 @@ The shim doesn't slow Workers, WebSockets, or `fetch` — none of which are typi
 
 ---
 
+## The seek driver
+
+`recordJob` actually has **two frame drivers**, picked per-job by capability detection. The slowdown trick above is the **play driver** — the universal fallback that works on any HTML. The **seek driver** is a fast path for pages that cooperate.
+
+The slowdown trick exists only because h2v has to *play* an animation it doesn't understand. A page that exposes its scene as a pure function of time removes that constraint entirely: instead of advancing a clock and racing screenshots, h2v asks the page for each frame's exact state.
+
+### Detection
+
+After navigation, `recordJob` probes the page:
+
+```js
+const seekable = await page.evaluate(() => typeof window.seek === 'function');
+```
+
+Present → seek driver. Absent → play driver. The function's presence is both the capability signal *and* the hook h2v calls — there's no separate metadata global. Duration and viewport come from the meta tags h2v already parsed pre-launch (`buildPlan` runs before any browser launches), so detection only decides *how to drive*, never *how big* or *how long*.
+
+`window.__SCRUB__ = true` is injected unconditionally before load — on the same `evaluate`-before-`setContent` / `evaluateOnNewDocument`-before-`goto` paths as the slowdown shim. It tells a seek-aware page not to autoplay (render frame 0, wait). It's inert for play-driven pages. It has to be set before page scripts run, but the driver can only be detected after load, so it's set unconditionally and the driver decided afterward.
+
+### Capture loop
+
+```
+await document.fonts.ready        (+ a short settle — the play path leans on
+                                   the slowdown to give fonts time; seek
+                                   captures frame 0 almost immediately)
+for i in [0, totalFrames):
+    window.seek(i × 1000/fps)
+    screenshot
+encode the resulting frames at fps
+```
+
+No pacing sleep — that deletion is the whole win. Wall time ≈ N screenshots, not `duration × S`. Frames span `[0, duration)` (capturing the true first frame at t=0) and are written 1-based on disk (`0001…N`) so the sequence matches `ffmpegStitch`'s `-start_number 1`, identical to the play path. The seek driver never touches the CDP `Animation` domain — there's no clock to slow.
+
+### It's auto-only, with a visible choice
+
+There's no `--driver` / `--seek` flag. For a generic tool the default has to handle the generic case (arbitrary HTML), so seek can only ever be an opt-in fast path, never the default — detection picks it automatically when the page cooperates. The one observability affordance is that each job logs which driver it used (`driver: seek …` / `driver: slowdown N×`), so a page that *meant* to be seek-driven but isn't being detected (a typo'd hook, an un-suppressed autoplay) is visible rather than silently downgraded. See `CLAUDE.md` for the design rationale and the authoring-side contract in [`authoring.md`](authoring.md).
+
+Fixture + test: `tests/seek-test.html`, `npm run test:seek`.
+
+---
+
 ## Frame capture format
 
 Frames are captured as **JPEG q=95** (configurable via `--capture-format` and `--capture-quality`) rather than PNG.
