@@ -34,6 +34,22 @@ const DEFAULTS = {
   codec: 'libx264',
 };
 
+// Default output target: fit each frame within a 4K (UHD) box, orientation-
+// aware — long edge ≤ 3840, short edge ≤ 2160. This is the default instead of
+// a fixed device-scale-factor so that output is ~4K regardless of the authored
+// viewport (h2v stays generic about canvas size; the "4K default" is honest
+// for any input). For a 1280×720 page this is identical to the old scale-3
+// default (× 3 = exactly 3840×2160). --scale (a density multiplier) and
+// --output-height both override it. See computeRenderPlan.
+const TARGET_4K_LONG = 3840;
+const TARGET_4K_SHORT = 2160;
+
+// Minimum frames a seek shard must hold to justify its own browser+page
+// load (~0.4s) + font settle (~0.15s). Below this, splitting costs more in
+// per-shard startup than it saves in parallel screenshots. Bounds the shard
+// count in recordJobSharded: K = min(workers, floor(totalFrames / this)).
+const SEEK_SHARD_MIN_FRAMES = 60;
+
 const CAPTURE_FORMATS = new Set(['jpeg', 'png']);
 const CAPTURE_EXT_FOR_FORMAT = { jpeg: 'jpg', png: 'png' };
 
@@ -162,8 +178,25 @@ EXPORT FLAGS
                       --width; default ${DEFAULTS.height}. --width and --height are a
                       coupled pair — passing either makes both override
                       per-animation metas.
-  --scale <N>         Device scale factor (default: ${DEFAULTS.scale};
-                      1280×720 × 3 = 4K).
+  --scale <N>         Density override: output = viewport × N (integer
+                      device-scale-factor, no resampling). Replaces the
+                      default 4K-fit target with a fixed multiplier — e.g.
+                      --scale 1 to record at the authored size. Mutually
+                      exclusive with --output-height.
+  --output-height <N> Target output height in pixels (width follows the
+                      animation's viewport aspect). h2v renders at the
+                      smallest INTEGER scale that meets-or-exceeds N — kept
+                      crisp, no fractional-scale aliasing — then Lanczos-
+                      downscales the frames to exactly N (supersampling).
+                      Overrides the default 4K-fit target to a specific
+                      height (e.g. 1440). Must be even. Mutually exclusive
+                      with --scale.
+
+                      DEFAULT (neither --scale nor --output-height): fit
+                      output within a 4K box (≤3840×2160, orientation-aware)
+                      preserving aspect — so output is ~4K for any viewport.
+                      A 1280×720 page → 3840×2160 (× 3); 1920×1080 → 3840×
+                      2160 (× 2); 1600×900 → renders ×3, downscales to 4K.
   --quality-preset <name>
                       Bundled output-quality config. One of:
                         max       PNG capture + ProRes 4444 (12-bit 4:4:4)
@@ -262,11 +295,14 @@ EXPORT FLAGS
                       Default theme has no filename suffix; non-default
                       themes are written as <name>-<theme>.<ext>, where
                       <ext> follows --container.
-  --concurrency <N>   How many animations to record in parallel (default
-                      1). Each parallel slot launches its own browser, so
-                      memory scales linearly. Useful for batches; for a
-                      single animation it has no effect. Suggested: 3 on
-                      8 GB, 8 on 16 GB, 12 on 32 GB+ (CPU cores cap
+  --concurrency <N>   How many browsers to record with in parallel (default
+                      1). Each slot launches its own browser, so memory
+                      scales linearly. For a batch (2+ jobs), jobs run in
+                      parallel. For a SINGLE animation, a seek-driven job is
+                      frame-sharded — its frames split across the slots — for
+                      a near-linear speedup; play (slowdown) and very short
+                      jobs stay on one browser. Suggested:
+                      3 on 8 GB, 8 on 16 GB, 12 on 32 GB+ (CPU cores cap
                       effective parallelism past ~12 on most machines).
                       h2v prints a (rough) warning if it estimates the
                       run will exceed available memory; it doesn't block.
@@ -379,6 +415,8 @@ function parseArgs(argv) {
     width: DEFAULTS.width,
     height: DEFAULTS.height,
     scale: DEFAULTS.scale,
+    scaleExplicit: false,
+    outputHeight: null,
     crf: DEFAULTS.crf,
     slowdown: DEFAULTS.slowdown,
     themeSpec: null,
@@ -432,7 +470,13 @@ function parseArgs(argv) {
       opts.height = parsePositiveInt(requireValue('--height'), '--height');
       opts.heightExplicit = true;
     }
-    else if (a === '--scale') opts.scale = parsePositiveInt(requireValue('--scale'), '--scale');
+    else if (a === '--scale') {
+      opts.scale = parsePositiveInt(requireValue('--scale'), '--scale');
+      opts.scaleExplicit = true;
+    }
+    else if (a === '--output-height') {
+      opts.outputHeight = parsePositiveInt(requireValue('--output-height'), '--output-height');
+    }
     else if (a === '--crf') {
       opts.crf = parseIntInRange(requireValue('--crf'), '--crf', 0, 51);
       opts.crfExplicit = true;
@@ -657,6 +701,34 @@ function resolveExportOpts(opts) {
       console.error(
         `error: --out extension .${ext} doesn't match container .${opts.container}. ` +
         `Either rename the output or pass --container ${ext} (if codec ${opts.codec} allows it).`
+      );
+      process.exit(2);
+    }
+  }
+
+  // --output-height: supersampled target resolution. h2v renders at an
+  // integer device-scale-factor that meets-or-exceeds the target height
+  // (kept crisp — no fractional DSF aliasing), then ffmpeg downscales the
+  // captured frames to the exact height with a Lanczos filter. The per-job
+  // integer render scale is computed in makeJob; the downscale is applied in
+  // ffmpegStitch. Width follows each animation's viewport aspect.
+  if (opts.outputHeight != null) {
+    // It's an alternative to --scale (it derives the render scale), so
+    // taking both is contradictory.
+    if (opts.scaleExplicit) {
+      console.error(
+        'error: --output-height and --scale are mutually exclusive. --output-height ' +
+        'derives the render scale automatically; pass one or the other.'
+      );
+      process.exit(2);
+    }
+    // Must be even: the default yuv420p encode (and most subsampled
+    // pix_fmts) require even dimensions. Width is forced even by the
+    // downscale filter (scale=-2:H); height is the user's value.
+    if (opts.outputHeight % 2 !== 0) {
+      console.error(
+        `error: --output-height must be even (got ${opts.outputHeight}); ` +
+        `video encoders require even dimensions. Try ${opts.outputHeight - 1}.`
       );
       process.exit(2);
     }
@@ -936,15 +1008,54 @@ function buildPlan(inputs, opts) {
   return jobs;
 }
 
+// Determine the capture (render) device-scale-factor and the optional
+// downscale target height for one animation, given its viewport. Three modes:
+//   --scale N (explicit) → density: render at integer N, no downscale.
+//   --output-height N    → render at the smallest integer ≥ N/height, then
+//                          downscale to height N (width follows the aspect).
+//   default (neither)    → fit within a 4K box (orientation-aware): render at
+//                          the smallest integer ≥ the fit ratio, downscale to
+//                          the fitted size.
+// In every mode the render scale is an INTEGER (crisp raster, no fractional-
+// DSF aliasing) and we only ever downscale (supersample), never upscale.
+// Returns { renderScale, outputHeight }; outputHeight is null in density mode,
+// and equals the render height (downscale skipped) on exact integer fits.
+function computeRenderPlan(width, height, opts) {
+  if (opts.scaleExplicit) {
+    return { renderScale: opts.scale, outputHeight: null };
+  }
+  if (opts.outputHeight != null) {
+    return {
+      renderScale: Math.max(1, Math.ceil(opts.outputHeight / height)),
+      outputHeight: opts.outputHeight,
+    };
+  }
+  // Default: fit within the 4K box, preserving aspect ratio and orientation.
+  const longSide = Math.max(width, height);
+  const shortSide = Math.min(width, height);
+  const fit = Math.min(TARGET_4K_LONG / longSide, TARGET_4K_SHORT / shortSide);
+  const renderScale = Math.max(1, Math.ceil(fit));
+  const renderHeight = height * renderScale;
+  // Even output height (encoders need it; ffmpeg's scale=-2 evens the width),
+  // clamped to never exceed the render height (downscale-only).
+  let outputHeight = 2 * Math.round((height * fit) / 2);
+  if (outputHeight > renderHeight) outputHeight = 2 * Math.floor(renderHeight / 2);
+  if (outputHeight < 2) outputHeight = 2;
+  return { renderScale, outputHeight };
+}
+
 function makeJob(j, opts) {
   const totalFrames = Math.max(1, Math.round(j.durationSeconds * opts.fps));
   const themeSuffix = j.theme ? '-' + j.theme : '';
   const captureKey = j.mode === 'bundle'
     ? `${j.inputBase}__${j.bundleId}${themeSuffix}`
     : `${j.inputBase}${themeSuffix}`;
+  const { renderScale, outputHeight } = computeRenderPlan(j.width, j.height, opts);
   return {
     ...j,
     totalFrames,
+    renderScale,
+    outputHeight,
     captureKey,
     label: j.mode === 'bundle'
       ? `[${j.inputBase}:${j.bundleId}${j.theme ? ' ' + j.theme : ''}]`
@@ -1102,165 +1213,316 @@ const SHIM_SOURCE = `(function(sf) {
 // Recording
 // =========================================================================
 
-async function recordJob(browser, job, opts, capturesRoot, logPrefix = '    ') {
+// Open a page, inject the pre-load preamble, navigate, detect the driver,
+// and apply per-driver setup. Returns { page, driver }; the caller owns
+// page.close(). Shared by the single-browser recorder (recordJob) and the
+// frame-sharded recorder (recordJobSharded).
+async function preparePage(browser, job, opts) {
   const page = await browser.newPage();
-  try {
-    await page.setViewport({
-      width: job.width,
-      height: job.height,
-      deviceScaleFactor: opts.scale,
-    });
+  await page.setViewport({
+    width: job.width,
+    height: job.height,
+    // job.renderScale is opts.scale normally, or the auto-picked integer
+    // supersampling scale when --output-height is set.
+    deviceScaleFactor: job.renderScale,
+  });
 
-    // Inject the pre-load preamble before any page script runs: the
-    // __SCRUB__ flag plus the JS time-slowdown shim.
-    //
-    //   - `window.__SCRUB__ = true` tells a seek-aware page (one exposing
-    //     `window.seek`) NOT to autoplay — it renders frame 0 and
-    //     waits to be driven by seek(). For every other page it's an inert
-    //     global. It MUST be set before load, but the driver decision can
-    //     only be made after load (we have to probe the page to know if it
-    //     exposes seek). So we set it unconditionally up front and
-    //     pick the driver below — a no-op for play-driven pages.
-    //   - The slowdown shim is only consumed by the play driver. It's
-    //     harmless for seek pages, which use no timers for choreography.
-    //
-    // Two injection paths because Puppeteer treats the content-loading
-    // modes differently:
-    //
-    //   - For single-file (`page.goto`), the navigation creates a new
-    //     document and `evaluateOnNewDocument` fires the preamble before
-    //     any page script runs. Standard pattern.
-    //
-    //   - For bundles (`page.setContent`), Puppeteer uses
-    //     `document.open(); document.write(html); document.close()` on the
-    //     existing about:blank — this is NOT a navigation, so
-    //     `evaluateOnNewDocument` never fires. Without intervention, the
-    //     bundle's scripts call the raw, un-shimmed `setTimeout` /
-    //     `performance.now` / `Date.now` / `requestAnimationFrame` (and
-    //     never see __SCRUB__). Fix: inject directly into the about:blank
-    //     window via `page.evaluate` before `setContent`. `document.write()`
-    //     replaces the document but not the window, so the preamble's
-    //     wrappers and globals persist into the new content's scope.
-    const scrub = 'window.__SCRUB__ = true;';
-    if (job.mode === 'bundle') {
-      await page.evaluate(`${scrub}(${SHIM_SOURCE})(${opts.slowdown});`);
-      await page.setContent(job.bundleHtml, { waitUntil: 'load' });
-    } else {
-      await page.evaluateOnNewDocument(`${scrub}${SHIM_SOURCE}(${opts.slowdown});`);
-      await page.goto('file://' + job.inputPath, { waitUntil: 'load' });
-    }
+  // Inject the pre-load preamble before any page script runs: the
+  // __SCRUB__ flag plus the JS time-slowdown shim.
+  //
+  //   - `window.__SCRUB__ = true` tells a seek-aware page (one exposing
+  //     `window.seek`) NOT to autoplay — it renders frame 0 and
+  //     waits to be driven by seek(). For every other page it's an inert
+  //     global. It MUST be set before load, but the driver decision can
+  //     only be made after load (we have to probe the page to know if it
+  //     exposes seek). So we set it unconditionally up front and
+  //     pick the driver below — a no-op for play-driven pages.
+  //   - The slowdown shim is only consumed by the play driver. It's
+  //     harmless for seek pages, which use no timers for choreography.
+  //
+  // Two injection paths because Puppeteer treats the content-loading
+  // modes differently:
+  //
+  //   - For single-file (`page.goto`), the navigation creates a new
+  //     document and `evaluateOnNewDocument` fires the preamble before
+  //     any page script runs. Standard pattern.
+  //
+  //   - For bundles (`page.setContent`), Puppeteer uses
+  //     `document.open(); document.write(html); document.close()` on the
+  //     existing about:blank — this is NOT a navigation, so
+  //     `evaluateOnNewDocument` never fires. Without intervention, the
+  //     bundle's scripts call the raw, un-shimmed `setTimeout` /
+  //     `performance.now` / `Date.now` / `requestAnimationFrame` (and
+  //     never see __SCRUB__). Fix: inject directly into the about:blank
+  //     window via `page.evaluate` before `setContent`. `document.write()`
+  //     replaces the document but not the window, so the preamble's
+  //     wrappers and globals persist into the new content's scope.
+  const scrub = 'window.__SCRUB__ = true;';
+  if (job.mode === 'bundle') {
+    await page.evaluate(`${scrub}(${SHIM_SOURCE})(${opts.slowdown});`);
+    await page.setContent(job.bundleHtml, { waitUntil: 'load' });
+  } else {
+    await page.evaluateOnNewDocument(`${scrub}${SHIM_SOURCE}(${opts.slowdown});`);
+    await page.goto('file://' + job.inputPath, { waitUntil: 'load' });
+  }
 
-    // Driver selection (auto-detect). A page that exposes `window.seek`
-    // is seek-aware: its scene is a pure function of time, so we can scrub
-    // it frame-by-frame — frame-perfect and with no slowdown wall-time
-    // penalty. Everything else uses the play driver (slow the clocks by S,
-    // pace screenshots to match). The probe runs post-load, which is why
-    // __SCRUB__ was injected unconditionally above. The presence of the
-    // function is both the capability signal and the behavioral hook; no
-    // separate metadata global is required (duration/viewport come from the
-    // meta tags h2v already parses pre-launch).
-    const seekable = await page.evaluate(
-      () => typeof window.seek === 'function'
-    );
-    const driver = seekable ? 'seek' : 'play';
-    console.log(
-      `${logPrefix}driver: ${driver === 'seek'
-        ? 'seek (frame-perfect, no slowdown)'
-        : `slowdown ${opts.slowdown}×`}`
-    );
+  // Driver selection (auto-detect). A page that exposes `window.seek`
+  // is seek-aware: its scene is a pure function of time, so we can scrub
+  // it frame-by-frame — frame-perfect and with no slowdown wall-time
+  // penalty. Everything else uses the play driver (slow the clocks by S,
+  // pace screenshots to match). The probe runs post-load, which is why
+  // __SCRUB__ was injected unconditionally above. The presence of the
+  // function is both the capability signal and the behavioral hook; no
+  // separate metadata global is required (duration/viewport come from the
+  // meta tags h2v already parses pre-launch).
+  const seekable = await page.evaluate(
+    () => typeof window.seek === 'function'
+  );
+  const driver = seekable ? 'seek' : 'play';
 
-    // Slow CSS animations / transitions / Web Animations API entries
-    // proportionally — play driver only. Must be set after navigation so
-    // the timeline exists. The seek driver drives state explicitly and
-    // never advances a clock, so the CDP playback rate is irrelevant to it.
-    if (driver === 'play') {
-      const client = await page.target().createCDPSession();
-      await client.send('Animation.enable');
-      if (opts.slowdown !== 1) {
-        await client.send('Animation.setPlaybackRate', {
-          playbackRate: 1 / opts.slowdown,
-        });
-      }
-    }
-
-    if (job.theme) {
-      await page.evaluate(
-        (t) => document.documentElement.setAttribute('data-theme', t),
-        job.theme
-      );
-    }
-
-    await page.evaluate(() =>
-      document.documentElement.setAttribute('data-h2v-recording', '')
-    );
-    await page.addStyleTag({
-      content: '[data-h2v-hide]{display:none!important}',
-    });
-
-    const captureDir = path.join(capturesRoot, job.captureKey);
-    fs.rmSync(captureDir, { recursive: true, force: true });
-    fs.mkdirSync(captureDir, { recursive: true });
-
-    const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
-    // omitBackground tells Chromium to skip painting its default white
-    // viewport background, exposing the page's own background-color (or
-    // transparency, if the page sets none / declares it transparent).
-    // Only meaningful with PNG capture — JPEG has no alpha channel.
-    // resolveExportOpts already enforces the format=png pairing.
-    const screenshotOpts = opts.captureFormat === 'png'
-      ? { type: 'png', omitBackground: opts.alpha }
-      : { type: 'jpeg', quality: opts.captureQuality };
-
-    if (driver === 'seek') {
-      // Seek driver: ask the page for each frame's exact state, screenshot,
-      // repeat. No clock advances, so there's no pacing sleep — wall time is
-      // just N screenshots. Wait for web fonts first (the play path relies
-      // on the slowdown to give fonts time; the seek path captures frame 0
-      // almost immediately, so we wait explicitly), then a short settle.
-      await page.evaluate(async () => {
-        if (document.fonts) await document.fonts.ready;
+  // Slow CSS animations / transitions / Web Animations API entries
+  // proportionally — play driver only. Must be set after navigation so
+  // the timeline exists. The seek driver drives state explicitly and
+  // never advances a clock, so the CDP playback rate is irrelevant to it.
+  if (driver === 'play') {
+    const client = await page.target().createCDPSession();
+    await client.send('Animation.enable');
+    if (opts.slowdown !== 1) {
+      await client.send('Animation.setPlaybackRate', {
+        playbackRate: 1 / opts.slowdown,
       });
-      await new Promise((r) => setTimeout(r, 150));
-      // Frames span [0, duration): tᵢ = i × (1000 / fps), capturing the true
-      // first frame at t=0. On-disk names are 1-based so the sequence
-      // (0001..N) matches ffmpegStitch's `-start_number 1`, same as play.
-      for (let i = 0; i < job.totalFrames; i++) {
-        const t = (i * 1000) / opts.fps;
-        await page.evaluate((ms) => window.seek(ms), t);
-        const fileName = String(i + 1).padStart(4, '0') + '.' + captureExt;
-        await page.screenshot({
-          ...screenshotOpts,
-          path: path.join(captureDir, fileName),
-        });
-        const done = i + 1;
-        if (!opts.quietProgress && (done % opts.fps === 0 || done === job.totalFrames)) {
-          process.stdout.write(`\r    captured ${done}/${job.totalFrames}`);
-        }
-      }
+    }
+  }
+
+  if (job.theme) {
+    await page.evaluate(
+      (t) => document.documentElement.setAttribute('data-theme', t),
+      job.theme
+    );
+  }
+
+  await page.evaluate(() =>
+    document.documentElement.setAttribute('data-h2v-recording', '')
+  );
+  await page.addStyleTag({
+    content: '[data-h2v-hide]{display:none!important}',
+  });
+
+  if (driver === 'seek') {
+    // Wait for web fonts before the first capture (the play path relies on
+    // the slowdown to give fonts time; seek captures frame 0 almost
+    // immediately, so we wait explicitly), then a short settle.
+    await page.evaluate(async () => {
+      if (document.fonts) await document.fonts.ready;
+    });
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  return { page, driver };
+}
+
+function makeCaptureDir(capturesRoot, job) {
+  const captureDir = path.join(capturesRoot, job.captureKey);
+  fs.rmSync(captureDir, { recursive: true, force: true });
+  fs.mkdirSync(captureDir, { recursive: true });
+  return captureDir;
+}
+
+function screenshotOptsFor(opts) {
+  // omitBackground tells Chromium to skip painting its default white
+  // viewport background, exposing the page's own background-color (or
+  // transparency, if the page sets none / declares it transparent).
+  // Only meaningful with PNG capture — JPEG has no alpha channel.
+  // resolveExportOpts already enforces the format=png pairing.
+  return opts.captureFormat === 'png'
+    ? { type: 'png', omitBackground: opts.alpha }
+    : { type: 'jpeg', quality: opts.captureQuality };
+}
+
+// Seek capture for the frame subrange [frameStart, frameEnd). Each frame is
+// `seek(ms)` then screenshot, no pacing sleep — wall time is just the
+// screenshots. Frames span the job's [0, totalFrames): tᵢ = i × (1000/fps),
+// so frame 0 is the true t=0. On-disk names are 1-based (`0001..N`) to match
+// ffmpegStitch's `-start_number 1`, same as the play path. Because seek() is
+// deterministic and order-independent, disjoint subranges can run on separate
+// browsers concurrently and write into the same captureDir (see
+// recordJobSharded).
+async function captureSeekRange(
+  page, job, opts, captureDir, captureExt, screenshotOpts, frameStart, frameEnd, quiet
+) {
+  // Warm-up: replay the seek sequence from frame 0 up to frameStart WITHOUT
+  // screenshotting. The seek contract says seek(ms) is a pure function of
+  // time, but real timeline engines (e.g. animation-kit's) often carry
+  // incremental state, so jumping cold to frameStart renders differently
+  // than arriving there frame-by-frame. Replaying the prefix reproduces the
+  // exact state a single-pass recording reaches at frameStart, making shard
+  // output byte-identical to single-worker. seek() is ~1 ms vs ~25–55 ms per
+  // screenshot, so the prefix replay is cheap relative to capture. No-op for
+  // frameStart === 0 (the single-worker path and shard 0).
+  for (let i = 0; i < frameStart; i++) {
+    await page.evaluate((ms) => window.seek(ms), (i * 1000) / opts.fps);
+  }
+  for (let i = frameStart; i < frameEnd; i++) {
+    const t = (i * 1000) / opts.fps;
+    await page.evaluate((ms) => window.seek(ms), t);
+    const fileName = String(i + 1).padStart(4, '0') + '.' + captureExt;
+    await page.screenshot({
+      ...screenshotOpts,
+      path: path.join(captureDir, fileName),
+    });
+    const done = i + 1;
+    if (!quiet && (done % opts.fps === 0 || done === job.totalFrames)) {
+      process.stdout.write(`\r    captured ${done}/${job.totalFrames}`);
+    }
+  }
+}
+
+// Play capture: pace screenshots at S × frame-interval real ms so the slowed
+// page advances exactly one target frame-interval per shot. Always captures
+// the full [0, totalFrames) — play is inherently sequential/real-time and
+// cannot be sharded.
+async function capturePlay(
+  page, job, opts, captureDir, captureExt, screenshotOpts, quiet
+) {
+  const tickMsReal = (1000 / opts.fps) * opts.slowdown;
+  const startReal = Date.now();
+  for (let i = 1; i <= job.totalFrames; i++) {
+    const target = startReal + i * tickMsReal;
+    const wait = target - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    const fileName = String(i).padStart(4, '0') + '.' + captureExt;
+    await page.screenshot({
+      ...screenshotOpts,
+      path: path.join(captureDir, fileName),
+    });
+    if (!quiet && (i % opts.fps === 0 || i === job.totalFrames)) {
+      process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
+    }
+  }
+}
+
+function driverLogLine(driver, opts) {
+  return driver === 'seek'
+    ? 'seek (frame-perfect, no slowdown)'
+    : `slowdown ${opts.slowdown}×`;
+}
+
+// Single-browser recorder: prepare one page, capture the whole job on it.
+// Used by the sequential path and the whole-job parallel pool.
+async function recordJob(browser, job, opts, capturesRoot, logPrefix = '    ') {
+  const captureDir = makeCaptureDir(capturesRoot, job);
+  const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
+  const screenshotOpts = screenshotOptsFor(opts);
+  const { page, driver } = await preparePage(browser, job, opts);
+  try {
+    console.log(`${logPrefix}driver: ${driverLogLine(driver, opts)}`);
+    if (driver === 'seek') {
+      await captureSeekRange(page, job, opts, captureDir, captureExt, screenshotOpts, 0, job.totalFrames, opts.quietProgress);
     } else {
-      // Play driver: pace screenshots at S × frame-interval real ms so the
-      // slowed page advances exactly one target frame-interval per shot.
-      const tickMsReal = (1000 / opts.fps) * opts.slowdown;
-      const startReal = Date.now();
-      for (let i = 1; i <= job.totalFrames; i++) {
-        const target = startReal + i * tickMsReal;
-        const wait = target - Date.now();
-        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-        const fileName = String(i).padStart(4, '0') + '.' + captureExt;
-        await page.screenshot({
-          ...screenshotOpts,
-          path: path.join(captureDir, fileName),
-        });
-        if (!opts.quietProgress && (i % opts.fps === 0 || i === job.totalFrames)) {
-          process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
-        }
-      }
+      await capturePlay(page, job, opts, captureDir, captureExt, screenshotOpts, opts.quietProgress);
     }
     if (!opts.quietProgress) process.stdout.write('\n');
     return captureDir;
   } finally {
     try { await page.close(); } catch { /* ignore cleanup errors */ }
   }
+}
+
+// Partition [0, total) into `parts` contiguous [start, end) ranges that
+// exactly cover it (the first `total % parts` ranges get one extra frame).
+// Yields fewer than `parts` ranges only when parts > total.
+function splitFrameRanges(total, parts) {
+  const ranges = [];
+  const base = Math.floor(total / parts);
+  let rem = total % parts;
+  let start = 0;
+  for (let k = 0; k < parts; k++) {
+    const size = base + (rem > 0 ? 1 : 0);
+    if (rem > 0) rem--;
+    if (size === 0) continue;
+    ranges.push([start, start + size]);
+    start += size;
+  }
+  return ranges;
+}
+
+// Frame-sharded recorder for a single job. A seek page's scene is a pure
+// function of time and seek() is order-independent, so we split
+// [0, totalFrames) across up to `maxWorkers` independent browser processes
+// (Chrome serializes screenshots intra-process — see runJobsParallel — so it
+// MUST be separate browsers, one page each, not multiple pages in one
+// browser). Each shard writes its frames by global 1-based index into the
+// shared captureDir; ffmpegStitch then sees one contiguous 0001..N sequence.
+//
+// Worker 0's page load doubles as the driver probe, so it isn't wasted: if
+// the page turns out to be play (un-shardable, real-time sequential) or too
+// small to be worth splitting, worker 0 simply captures the whole range on
+// its already-open browser — identical to the single-browser path.
+async function recordJobSharded(job, opts, capturesRoot, puppeteer, maxWorkers, logPrefix = '    ') {
+  const captureDir = makeCaptureDir(capturesRoot, job);
+  const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
+  const screenshotOpts = screenshotOptsFor(opts);
+
+  const browser0 = await launchBrowser(puppeteer);
+  const { page: page0, driver } = await preparePage(browser0, job, opts);
+
+  // Shard count: bounded by the worker budget AND by keeping each shard big
+  // enough to amortize its ~page-load overhead (SEEK_SHARD_MIN_FRAMES). Play
+  // jobs and small seek jobs collapse to K=1 (no fan-out).
+  const K = driver === 'seek'
+    ? Math.max(1, Math.min(maxWorkers, Math.floor(job.totalFrames / SEEK_SHARD_MIN_FRAMES)))
+    : 1;
+
+  if (K <= 1) {
+    try {
+      console.log(`${logPrefix}driver: ${driverLogLine(driver, opts)}`);
+      if (driver === 'seek') {
+        await captureSeekRange(page0, job, opts, captureDir, captureExt, screenshotOpts, 0, job.totalFrames, opts.quietProgress);
+      } else {
+        await capturePlay(page0, job, opts, captureDir, captureExt, screenshotOpts, opts.quietProgress);
+      }
+      if (!opts.quietProgress) process.stdout.write('\n');
+    } finally {
+      try { await page0.close(); } catch { /* ignore */ }
+      try { await browser0.close(); } catch { /* ignore */ }
+    }
+    return captureDir;
+  }
+
+  // Seek + worth sharding: fan out. Worker 0 takes ranges[0] on the
+  // already-open page0; helper browsers take the rest. Per-frame progress is
+  // suppressed (K concurrent writers would clobber the \r line).
+  const ranges = splitFrameRanges(job.totalFrames, K);
+  console.log(
+    `${logPrefix}driver: seek (frame-perfect, no slowdown) — ` +
+    `${job.totalFrames} frames across ${ranges.length} browsers`
+  );
+
+  const worker0 = (async () => {
+    try {
+      await captureSeekRange(page0, job, opts, captureDir, captureExt, screenshotOpts, ranges[0][0], ranges[0][1], true);
+    } finally {
+      try { await page0.close(); } catch { /* ignore */ }
+      try { await browser0.close(); } catch { /* ignore */ }
+    }
+  })();
+
+  const helpers = ranges.slice(1).map(([start, end]) => (async () => {
+    const browser = await launchBrowser(puppeteer);
+    try {
+      const { page } = await preparePage(browser, job, opts);
+      try {
+        await captureSeekRange(page, job, opts, captureDir, captureExt, screenshotOpts, start, end, true);
+      } finally {
+        try { await page.close(); } catch { /* ignore */ }
+      }
+    } finally {
+      try { await browser.close(); } catch { /* ignore */ }
+    }
+  })());
+
+  await Promise.all([worker0, ...helpers]);
+  return captureDir;
 }
 
 // =========================================================================
@@ -1401,7 +1663,7 @@ function buildEncodeArgs(opts) {
   }
 }
 
-function ffmpegStitch(captureDir, outPath, opts) {
+function ffmpegStitch(captureDir, outPath, opts, job) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
@@ -1412,23 +1674,39 @@ function ffmpegStitch(captureDir, outPath, opts) {
     // index.
     const faststart = (opts.container === 'mp4' || opts.container === 'mov')
       ? ['-movflags', '+faststart'] : [];
-    // Pre-multiply alpha (RGB×α) before encoding when --alpha is on with
-    // the default --alpha-mode. Most video-pipeline tools — CapCut,
-    // Resolve, Premiere, AE — assume premultiplied alpha for compositing
-    // intermediates; without this, semi-transparent pixels render with
-    // full-strength RGB blown out behind partial alpha (white halos on
-    // glows, solid colours where semi-transparent backgrounds should be).
-    // Users who explicitly want straight alpha pass --alpha-mode straight.
-    const alphaFilter = (opts.alpha && opts.alphaMode === 'premultiplied')
-      ? ['-vf', 'premultiply=inplace=1']
-      : [];
+
+    // Build the -vf filter chain. Order matters: premultiply BEFORE
+    // downscale so alpha is scaled in premultiplied space (avoids edge
+    // halos); the chain is applied left-to-right pre-encode.
+    const vf = [];
+    // Pre-multiply alpha (RGB×α) when --alpha is on with the default
+    // --alpha-mode. Most video tools (CapCut, Resolve, Premiere, AE) assume
+    // premultiplied alpha for compositing intermediates; without this,
+    // semi-transparent pixels blow out (white halos on glows, solid colours
+    // where semi-transparent backgrounds should be). --alpha-mode straight
+    // opts out.
+    if (opts.alpha && opts.alphaMode === 'premultiplied') {
+      vf.push('premultiply=inplace=1');
+    }
+    // Supersampling downscale. Frames are captured at an integer render
+    // scale that meets-or-exceeds the target (see computeRenderPlan); here we
+    // Lanczos-downscale to the per-job target height, width auto (-2 =
+    // preserve aspect, force even). Skipped when the captured height already
+    // equals the target (exact integer fit → no resample). job.outputHeight
+    // is null in --scale density mode (no downscale ever).
+    if (job && job.outputHeight != null
+        && job.height * job.renderScale !== job.outputHeight) {
+      vf.push(`scale=-2:${job.outputHeight}:flags=lanczos`);
+    }
+    const vfArgs = vf.length ? ['-vf', vf.join(',')] : [];
+
     const args = [
       '-y',
       '-loglevel', 'error',
       '-framerate', String(opts.fps),
       '-start_number', '1',
       '-i', path.join(captureDir, '%04d.' + captureExt),
-      ...alphaFilter,
+      ...vfArgs,
       ...buildEncodeArgs(opts),
       ...faststart,
       outPath,
@@ -2099,7 +2377,10 @@ async function runBundle(paths, opts) {
 function estimateWorkerMemoryMb(jobs, opts) {
   let maxMp = 0;
   for (const j of jobs) {
-    const mp = (j.width * opts.scale) * (j.height * opts.scale) / 1e6;
+    // Memory is driven by the captured (render) resolution, which is
+    // j.renderScale — equal to opts.scale normally, or the supersampling
+    // scale when --output-height is set.
+    const mp = (j.width * j.renderScale) * (j.height * j.renderScale) / 1e6;
     if (mp > maxMp) maxMp = mp;
   }
   return Math.round(150 + 30 * maxMp);
@@ -2204,7 +2485,7 @@ async function runJobsSequential(jobs, opts, capturesRoot, puppeteer) {
       if (!opts.skipFfmpeg) {
         const outPath = outputPathFor(job, opts);
         console.log(`    encoding → ${relativeToHere(outPath)}`);
-        await ffmpegStitch(captureDir, outPath, opts);
+        await ffmpegStitch(captureDir, outPath, opts, job);
       }
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.log(`    done in ${elapsed}s`);
@@ -2237,7 +2518,7 @@ async function runJobsParallel(jobs, opts, capturesRoot, puppeteer, K) {
         const captureDir = await recordJob(browser, job, workerOpts, capturesRoot, `[w${idx}] `);
         if (!opts.skipFfmpeg) {
           const outPath = outputPathFor(job, opts);
-          await ffmpegStitch(captureDir, outPath, opts);
+          await ffmpegStitch(captureDir, outPath, opts, job);
         }
         completed++;
         const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -2249,6 +2530,27 @@ async function runJobsParallel(jobs, opts, capturesRoot, puppeteer, K) {
   };
 
   await Promise.all(Array.from({ length: K }, (_, i) => worker(i)));
+}
+
+// Frame-sharding path: used when there are fewer jobs than the requested
+// worker budget, so spare workers can be spent splitting a large seek job's
+// frames across browsers instead of sitting idle. Jobs run one at a time;
+// each gets the full budget K for its own frames (the common case is a
+// single long animation). Play jobs and small seek jobs degrade gracefully
+// to a single browser inside recordJobSharded.
+async function runJobsFrameSharded(jobs, opts, capturesRoot, puppeteer, K) {
+  for (const job of jobs) {
+    const startedAt = Date.now();
+    console.log(`\n${job.label} ${job.durationSeconds}s × ${opts.fps}fps = ${job.totalFrames} frames`);
+    const captureDir = await recordJobSharded(job, opts, capturesRoot, puppeteer, K);
+    if (!opts.skipFfmpeg) {
+      const outPath = outputPathFor(job, opts);
+      console.log(`    encoding → ${relativeToHere(outPath)}`);
+      await ffmpegStitch(captureDir, outPath, opts, job);
+    }
+    const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.log(`    done in ${elapsed}s`);
+  }
 }
 
 // =========================================================================
@@ -2304,10 +2606,34 @@ async function main() {
 
   printPlan(jobs, opts);
 
+  // Execution mode — `--concurrency N` is one browser budget, spent one of
+  // three ways depending on how many jobs there are:
+  //   - sequential : no parallelism requested (--concurrency 1).
+  //   - frameshard : exactly ONE job, so there's no job-level parallelism to
+  //                  spend the budget on — instead split that job's frames
+  //                  across browsers (seek only; play/small jobs degrade to a
+  //                  single browser inside recordJobSharded). This is the new
+  //                  behavior; everything else is unchanged.
+  //   - jobpool    : 2+ jobs — run whole jobs in parallel, exactly as before.
+  // Gating frame-sharding to a single job is deliberate: with 2+ jobs,
+  // job-level parallelism already uses the budget, and sharding sequentially
+  // would REGRESS multi-job batches (especially un-shardable play jobs, which
+  // would run one-after-another instead of in parallel). A fair-share hybrid
+  // (shard within while also running jobs concurrently) is possible later.
+  const requested = opts.concurrency;
+  const mode = requested <= 1 ? 'sequential'
+    : jobs.length === 1 ? 'frameshard'
+    : 'jobpool';
+
+  // Peak concurrent browsers, for the memory estimate. Frame-sharding may
+  // spin up the full requested budget on its one job.
+  const peakBrowsers = mode === 'sequential' ? 1
+    : mode === 'jobpool' ? Math.min(requested, jobs.length)
+    : requested;
+
   // Memory-budget warning fires in dry-run too — users may want to preview
   // whether a planned --concurrency setting will fit before committing.
-  const concurrency = Math.min(opts.concurrency, jobs.length);
-  checkMemoryBudget(jobs, opts, concurrency);
+  checkMemoryBudget(jobs, opts, peakBrowsers);
 
   if (opts.dryRun) return;
 
@@ -2347,26 +2673,53 @@ async function main() {
   } else {
     codecDesc = `${opts.codec} crf ${opts.crf}`;
   }
-  // Resolution summary differs when jobs have mixed viewports (per-animation
-  // h2v-viewport metas / bundle attributes vary). Per-job rows in the plan
-  // carry the precise sizes; this line summarizes.
-  const sizes = new Set(jobs.map((j) => `${j.width}x${j.height}`));
-  const sizeDesc = sizes.size === 1
-    ? `${jobs[0].width * opts.scale}×${jobs[0].height * opts.scale} ` +
-      `(${jobs[0].width}×${jobs[0].height} × ${opts.scale})`
-    : `varied resolutions (× ${opts.scale} scale)`;
+  // Resolution summary. Three shapes: density (--scale, no downscale),
+  // target (default 4K-fit or --output-height — render at an integer scale
+  // then Lanczos-downscale to the target). Per-job rows carry precise sizes
+  // when viewports vary; this line summarizes.
+  const sizes = new Set(jobs.map((j) => `${j.width * j.renderScale}x${j.height * j.renderScale}`));
+  const single = sizes.size === 1;
+  const j0 = jobs[0];
+  let sizeDesc;
+  if (opts.scaleExplicit) {
+    // Density mode: output = viewport × scale, no resample.
+    sizeDesc = single
+      ? `${j0.width * opts.scale}×${j0.height * opts.scale} (${j0.width}×${j0.height} × ${opts.scale})`
+      : `varied resolutions (× ${opts.scale} scale)`;
+  } else {
+    // Target mode (default 4K-fit, or --output-height). Show render → target.
+    const targetLabel = opts.outputHeight != null ? `${opts.outputHeight}p` : '4K-fit';
+    if (!single) {
+      sizeDesc = `varied render sizes → ${targetLabel}`;
+    } else {
+      const renderDesc = `${j0.width * j0.renderScale}×${j0.height * j0.renderScale} (${j0.width}×${j0.height} × ${j0.renderScale})`;
+      const exact = j0.height * j0.renderScale === j0.outputHeight;
+      if (exact) {
+        sizeDesc = renderDesc;
+      } else {
+        const outW = 2 * Math.round((j0.width / j0.height) * j0.outputHeight / 2);
+        sizeDesc = `${renderDesc} → downscaled to ${outW}×${j0.outputHeight}`;
+      }
+    }
+  }
   console.log(
     `\nRecording at ${sizeDesc}, ${opts.fps}fps, ` +
     `preset ${tier}: capture ${captureDesc}, ${codecDesc} → .${opts.container}, ` +
     `slowdown ${opts.slowdown}× (wall time = animation × ${opts.slowdown})` +
-    (concurrency > 1 ? `, concurrency ${concurrency}` : '') + '.'
+    (peakBrowsers > 1
+      ? `, concurrency ${peakBrowsers}${mode === 'frameshard' ? ' (frame-sharded for seek jobs)' : ''}`
+      : '') + '.'
   );
 
   try {
-    if (concurrency === 1) {
+    if (mode === 'sequential') {
       await runJobsSequential(jobs, opts, capturesRoot, puppeteer);
+    } else if (mode === 'jobpool') {
+      // peakBrowsers = min(requested, jobs.length) here — don't spawn idle
+      // workers for jobs that don't exist.
+      await runJobsParallel(jobs, opts, capturesRoot, puppeteer, peakBrowsers);
     } else {
-      await runJobsParallel(jobs, opts, capturesRoot, puppeteer, concurrency);
+      await runJobsFrameSharded(jobs, opts, capturesRoot, puppeteer, peakBrowsers);
     }
 
     console.log('\nAll animations recorded.');

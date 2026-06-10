@@ -335,4 +335,78 @@ scenario('--concurrency 2 on a 4-anim bundle → 4 valid outputs', ({ tmp }) => 
   }
 });
 
+// ===========================================================================
+// Default output target: fit within a 4K box (orientation-aware), no flags
+// ===========================================================================
+
+scenario('default (no --scale): 1920×1080 viewport → 3840×2160 (4K, render ×2 exact)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp, { viewport: '1920x1080', duration: '0.3s' });
+  const r = runH2v(['export', fx, '--slowdown', '1'], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const stream = ffprobe(path.join(tmp, 'output', 'tiny.mp4')).streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.width, 3840, 'width');
+  assertEq(stream.height, 2160, 'height');
+});
+
+scenario('default (no --scale): 540×960 portrait → 2160×3840 (orientation-aware 4K)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp, { viewport: '540x960', duration: '0.3s' });
+  const r = runH2v(['export', fx, '--slowdown', '1'], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const stream = ffprobe(path.join(tmp, 'output', 'tiny.mp4')).streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.width, 2160, 'width (portrait short edge)');
+  assertEq(stream.height, 3840, 'height (portrait long edge)');
+});
+
+scenario('default (no --scale): over-4K viewport 4000×2250 → downscaled to 3840×2160', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp, { viewport: '4000x2250', duration: '0.3s' });
+  const r = runH2v(['export', fx, '--slowdown', '1'], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const stream = ffprobe(path.join(tmp, 'output', 'tiny.mp4')).streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.width, 3840, 'width (downscaled to fit 4K)');
+  assertEq(stream.height, 2160, 'height (downscaled to fit 4K)');
+});
+
+// ===========================================================================
+// --output-height (supersampled target resolution)
+// ===========================================================================
+
+scenario('--output-height downscales to exact target (viewport not an integer divisor)', ({ tmp }) => {
+  // 640×360 viewport, target height 300 → render scale = ceil(300/360) = 1
+  // (render 640×360), then Lanczos-downscale to height 300. Width follows
+  // 16:9 aspect → 300 × 640/360 = 533.3 → even → 532 or 534.
+  const fx = writeTinyFixture(tmp, { viewport: '640x360' });
+  const r = runH2v(['export', fx, '--output-height', '300', '--slowdown', '1'], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const info = ffprobe(path.join(tmp, 'output', 'tiny.mp4'));
+  const stream = info.streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.height, 300, 'height = target');
+  assert(stream.width % 2 === 0, `width must be even (got ${stream.width})`);
+  // Aspect preserved (16:9 → ~533), even-rounded.
+  assert(Math.abs(stream.width - 533) <= 2, `width ~533 for 16:9 (got ${stream.width})`);
+});
+
+scenario('--output-height exact integer multiple → no resample, exact size', ({ tmp }) => {
+  // 640×360, target 1080 → render scale = ceil(1080/360) = 3 → render 1920×1080
+  // already equals target height → downscale skipped, output exactly 1920×1080.
+  const fx = writeTinyFixture(tmp, { viewport: '640x360' });
+  const r = runH2v(['export', fx, '--output-height', '1080', '--slowdown', '1'], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const info = ffprobe(path.join(tmp, 'output', 'tiny.mp4'));
+  const stream = info.streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.width, 1920, 'width (640 × 3)');
+  assertEq(stream.height, 1080, 'height (target = 360 × 3)');
+});
+
+scenario('--output-height + --scale → exit 2 (mutually exclusive)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp);
+  const r = runH2v(['export', fx, '--output-height', '720', '--scale', '2'], { cwd: tmp });
+  assertEq(r.code, 2, 'exit code');
+});
+
+scenario('odd --output-height → exit 2 (encoders need even dims)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp);
+  const r = runH2v(['export', fx, '--output-height', '721'], { cwd: tmp });
+  assertEq(r.code, 2, 'exit code');
+});
+
 summary();

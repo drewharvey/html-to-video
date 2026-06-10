@@ -123,4 +123,58 @@ scenario('seek-test.html: auto-detects seek driver and scrubs frame-perfect', ({
   );
 });
 
+// Frame-sharding: --concurrency on a single seek animation splits its frames
+// across browsers (seek is order-independent, so disjoint ranges run in
+// parallel and reassemble). The output must be byte-identical to a
+// single-worker recording — sharding is a speedup, never a content change.
+function framesIdentical(videoA, videoB, times) {
+  for (const t of times) {
+    const a = extractFrameRgba(videoA, t);
+    const b = extractFrameRgba(videoB, t);
+    if (a.length !== b.length || !a.equals(b)) return t;
+  }
+  return null;
+}
+
+scenario('seek-test.html: --concurrency 2 shards and matches single-worker', ({ tmp }) => {
+  const base = ['export', 'tests/seek-test.html', '--width', String(VW), '--height', String(VH), '--scale', '1'];
+  const v1 = path.join(tmp, 'one.mp4');
+  const v2 = path.join(tmp, 'two.mp4');
+  const r1 = runH2v([...base, '--out', v1], { cwd: REPO_ROOT });
+  assert(r1.code === 0, `1-worker export exit ${r1.code}; stderr: ${r1.stderr}`);
+  const r2 = runH2v([...base, '--concurrency', '2', '--out', v2], { cwd: REPO_ROOT });
+  assert(r2.code === 0, `2-worker export exit ${r2.code}; stderr: ${r2.stderr}`);
+
+  // It actually sharded (120 frames / 60 min-per-shard = 2 shards).
+  assert(
+    /across\s+2\s+browsers/.test(r2.stdout),
+    `expected frame-sharding across 2 browsers; got:\n${r2.stdout}`
+  );
+
+  // Byte-identical frames at start, mid, end.
+  const diff = framesIdentical(v1, v2, [0.1, 1.0, 1.9]);
+  assert(diff === null, `sharded output differs from single-worker at t=${diff}s`);
+});
+
+// Regression guard for the warm-up replay in captureSeekRange. This fixture's
+// seek() is deliberately ORDER-DEPENDENT (carries a step counter), like real
+// timeline engines. If a shard cold-jumps to its start frame instead of
+// replaying the seek prefix, its frames render differently than single-worker
+// and this scenario fails. It's the canary for the warm-up logic.
+scenario('seek-stateful-test.html: sharded matches single-worker (warm-up replay)', ({ tmp }) => {
+  const base = ['export', 'tests/seek-stateful-test.html', '--width', String(VW), '--height', String(VH), '--scale', '1'];
+  const v1 = path.join(tmp, 'sf-one.mp4');
+  const v2 = path.join(tmp, 'sf-two.mp4');
+  const r1 = runH2v([...base, '--out', v1], { cwd: REPO_ROOT });
+  assert(r1.code === 0, `1-worker export exit ${r1.code}; stderr: ${r1.stderr}`);
+  const r2 = runH2v([...base, '--concurrency', '2', '--out', v2], { cwd: REPO_ROOT });
+  assert(r2.code === 0, `2-worker export exit ${r2.code}; stderr: ${r2.stderr}`);
+  assert(/across\s+2\s+browsers/.test(r2.stdout), `expected sharding; got:\n${r2.stdout}`);
+
+  // The order-dependent bar position must match across the shard boundary
+  // (frame 60). Without warm-up, the second shard's frames would be wrong.
+  const diff = framesIdentical(v1, v2, [0.1, 1.0, 1.1, 1.5, 1.9]);
+  assert(diff === null, `stateful sharded output differs from single-worker at t=${diff}s (warm-up replay broken?)`);
+});
+
 summary();

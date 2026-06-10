@@ -102,7 +102,15 @@ No pacing sleep — that deletion is the whole win. Wall time ≈ N screenshots,
 
 There's no `--driver` / `--seek` flag. For a generic tool the default has to handle the generic case (arbitrary HTML), so seek can only ever be an opt-in fast path, never the default — detection picks it automatically when the page cooperates. The one observability affordance is that each job logs which driver it used (`driver: seek …` / `driver: slowdown N×`), so a page that *meant* to be seek-driven but isn't being detected (a typo'd hook, an un-suppressed autoplay) is visible rather than silently downgraded. See `CLAUDE.md` for the design rationale and the authoring-side contract in [`authoring.md`](authoring.md).
 
-Fixture + test: `tests/seek-test.html`, `npm run test:seek`.
+### Frame-sharding (parallelizing one animation)
+
+Because `seek(ms)` is deterministic and (per contract) order-independent, the seek driver can do something the play driver fundamentally can't: split a **single** animation's frame range across multiple browsers. On a single-animation run with `--concurrency N > 1`, the budget that would otherwise sit idle is spent splitting the job: N browsers each record a contiguous slice of `[0, totalFrames)` — separate browser processes, one page each (Chrome serializes screenshots intra-process, so it must be separate browsers — same reason as batch recording). They write frames by global 1-based index into the shared captures dir; ffmpeg sees one contiguous sequence. (A batch of 2+ jobs uses whole-job parallelism instead; sharding is gated to a single job so multi-job batches never regress.)
+
+The screenshot is ~99% of per-frame cost (~25 ms at 1080p, ~55 ms at 4K; `seek()` itself is ~1 ms), so parallelizing screenshots is the whole win — measured ~2.5× at K=4 on an 18.5 s clip, more at 4K. Worker 0's page load doubles as the driver probe, so detection isn't a wasted load; if the page turns out to be play, worker 0 just records the whole thing single-browser.
+
+**Warm-up replay (load-bearing).** The contract says `seek(ms)` is a pure function of time, but real timeline engines (animation-kit's included) often carry incremental state — empirically, jumping cold to t=9 s renders *differently* than arriving there frame-by-frame. So before capturing its slice, each shard **replays `seek()` from frame 0 up to its start frame without screenshotting**. This reproduces the exact state a single pass reaches at the boundary, making sharded output byte-identical to single-worker. The replay is cheap (`seek()` ≈ 1 ms vs ≈ 25–55 ms/screenshot). Without it, order-dependent animations render wrong frames in every shard but the first — silently, since they still *look* plausible. `tests/seek-stateful-test.html` is the deliberately order-dependent regression guard.
+
+Fixtures + test: `tests/seek-test.html`, `tests/seek-stateful-test.html`, `npm run test:seek`.
 
 ---
 

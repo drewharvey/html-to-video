@@ -51,8 +51,25 @@ EXPORT FLAGS
                       --width; default 720. --width and --height are a
                       coupled pair — passing either makes both override
                       per-animation metas.
-  --scale <N>         Device scale factor (default: 3;
-                      1280×720 × 3 = 4K).
+  --scale <N>         Density override: output = viewport × N (integer
+                      device-scale-factor, no resampling). Replaces the
+                      default 4K-fit target with a fixed multiplier — e.g.
+                      --scale 1 to record at the authored size. Mutually
+                      exclusive with --output-height.
+  --output-height <N> Target output height in pixels (width follows the
+                      animation's viewport aspect). h2v renders at the
+                      smallest INTEGER scale that meets-or-exceeds N — kept
+                      crisp, no fractional-scale aliasing — then Lanczos-
+                      downscales the frames to exactly N (supersampling).
+                      Overrides the default 4K-fit target to a specific
+                      height (e.g. 1440). Must be even. Mutually exclusive
+                      with --scale.
+
+                      DEFAULT (neither --scale nor --output-height): fit
+                      output within a 4K box (≤3840×2160, orientation-aware)
+                      preserving aspect — so output is ~4K for any viewport.
+                      A 1280×720 page → 3840×2160 (× 3); 1920×1080 → 3840×
+                      2160 (× 2); 1600×900 → renders ×3, downscales to 4K.
   --quality-preset <name>
                       Bundled output-quality config. One of:
                         max       PNG capture + ProRes 4444 (12-bit 4:4:4)
@@ -151,11 +168,14 @@ EXPORT FLAGS
                       Default theme has no filename suffix; non-default
                       themes are written as <name>-<theme>.<ext>, where
                       <ext> follows --container.
-  --concurrency <N>   How many animations to record in parallel (default
-                      1). Each parallel slot launches its own browser, so
-                      memory scales linearly. Useful for batches; for a
-                      single animation it has no effect. Suggested: 3 on
-                      8 GB, 8 on 16 GB, 12 on 32 GB+ (CPU cores cap
+  --concurrency <N>   How many browsers to record with in parallel (default
+                      1). Each slot launches its own browser, so memory
+                      scales linearly. For a batch (2+ jobs), jobs run in
+                      parallel. For a SINGLE animation, a seek-driven job is
+                      frame-sharded — its frames split across the slots — for
+                      a near-linear speedup; play (slowdown) and very short
+                      jobs stay on one browser. Suggested:
+                      3 on 8 GB, 8 on 16 GB, 12 on 32 GB+ (CPU cores cap
                       effective parallelism past ~12 on most machines).
                       h2v prints a (rough) warning if it estimates the
                       run will exceed available memory; it doesn't block.
@@ -312,6 +332,38 @@ h2v export a.html --codec libx265 --out hero.webm       # error (h265 not allowe
 
 ---
 
+## Output resolution
+
+By **default**, h2v fits the output within a **4K box** (≤ 3840×2160, orientation-aware), preserving the animation's aspect ratio. This is independent of the authored viewport, so "4K output" holds for *any* input — h2v stays generic about canvas size:
+
+| Viewport | Default output | How |
+|---|---|---|
+| 1280×720 | 3840×2160 | render × 3 (exact) |
+| 1920×1080 | 3840×2160 | render × 2 (exact) |
+| 1600×900 | 3840×2160 | render × 3 (4800×2700), downscale |
+| 1080×1920 (portrait) | 2160×3840 | render × 2 (exact) |
+| 4000×2250 (over-4K) | 3840×2160 | render × 1, downscale |
+
+The render is always at an **integer** device-scale-factor (crisp raster, no fractional-DSF aliasing); when that integer overshoots the 4K box, the frames are Lanczos-**downscaled** to fit (supersampling — see below). For a viewport that divides evenly into 4K (1280×720 → ×3, 1920×1080 → ×2) there's no downscale at all.
+
+### Overriding the default
+
+Two ways to take control:
+
+- **`--scale <N>`** — density override: `output = viewport × N` (integer DSF, no resampling). Use `--scale 1` to record at the authored size, or any N for a fixed multiple. This is the old default behavior; it can produce any size (including over-4K), so it's now opt-in.
+- **`--output-height <N>`** — target a specific output height (width follows the aspect). E.g. `--output-height 1440` for 1440p, or `--output-height 2160` to force 4K-by-height explicitly.
+
+The two are mutually exclusive (each fully determines the resolution). `--scale` is integer-only because a fractional device-scale-factor introduces sub-pixel aliasing (1px borders/text smeared across fractional device pixels) — the default 4K-fit and `--output-height` avoid that by rendering at an integer scale and downscaling.
+
+### Supersampling (how the downscale stays crisp)
+
+When the integer render scale overshoots the target (the default 4K-fit on a non-evenly-dividing viewport, or any `--output-height`), h2v renders larger then **Lanczos-downscales** to the exact target. Downscaling from a higher-res integer render is supersampling (SSAA): edges come out *cleaner* than a direct render, never blurrier, and dimensions stay even.
+
+- **N must be even** for `--output-height` (encoders require even dimensions; width is auto-evened via `scale=-2`).
+- **Cost** is governed by the *render* scale, not the output. Hitting 4K from a 900px viewport renders at ×3 (4800×2700) then downscales — same capture cost as rendering over-4K, plus a near-free downscale (you encode *fewer* pixels, which offsets the resample). To go faster, target a height that lands on a smaller integer render scale.
+
+---
+
 ## Per-file duration precedence
 
 h2v needs to know how long to record each animation. In priority order:
@@ -365,6 +417,19 @@ Per-job log lines are tagged with the worker index:
 
 **Why one-browser-per-worker:** pages inside one Chrome process serialize on the screenshot pipeline (a single tab takes ~80 ms; two tabs concurrent in the same browser made each capture take ~1400 ms in our benchmark). Separate browser processes don't share that pipeline and parallelize cleanly — `tests/bench-parallel.js` measured ~85 % of ideal linear scaling at K=4. **Don't try to "optimize" by sharing one browser across pages.**
 
+### Frame-sharding a single animation (seek driver)
+
+`--concurrency` also speeds up a **single** animation, as long as it's recorded by the [seek driver](internals.md#the-seek-driver) (exposes `window.seek`). Because `seek(ms)` is deterministic, its frame range is split across the worker browsers — each records a contiguous slice and they reassemble into one video:
+
+```
+h2v export long-clip.html --concurrency 4
+# → driver: seek (frame-perfect, no slowdown) — 1110 frames across 4 browsers
+```
+
+This is the same one-browser-per-worker model as batch recording, just sharded by frames instead of by job. The output is byte-identical to a single-worker recording. Measured ~2.5× faster at K=4 on an 18.5 s clip (the gain grows at 4K, where the screenshot dominates per-shard startup).
+
+Frame-sharding kicks in **only for a single-animation run** (one job). A batch of 2+ animations always uses job-level parallelism instead (above) — unchanged from before, so multi-job runs never regress. Within a single-animation run, a play (slowdown) job can't be sharded (it's inherently sequential and stays on one browser), and a very short clip falls below the sharding threshold and also runs on one browser.
+
 ### Trade-offs
 
 - **Memory** scales linearly with `--concurrency`. Each browser is its own Chrome process; budget roughly 300-500 MB per worker at 4K. h2v prints a non-blocking warning if it estimates the run will exceed ~70% of available memory:
@@ -377,7 +442,7 @@ Per-job log lines are tagged with the worker index:
   The estimate is `~150 MB + ~30 MB × megapixels` per worker. False positives are preferable to silent OOMs; either way, the run proceeds.
 - **Output ordering**: per-job log lines from different workers interleave. The per-frame `\r` progress reporter is suppressed in parallel mode (with K writers it would clobber).
 - **Sync and quality are unaffected.** Each worker has its own browser, JS time-shim, and CDP `Animation.setPlaybackRate`. CPU contention can cause slightly less-uniform frame-time distribution, but JS-vs-CSS sync within each animation is preserved.
-- Has no effect for a single animation.
+- **Single seek animations benefit too**, via frame-sharding (see above). Single *play* (slowdown) animations still see no effect — they can't be sharded.
 
 ### Concurrency vs RAM: quick reference
 

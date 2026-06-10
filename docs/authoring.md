@@ -77,6 +77,14 @@ Honored by both `h2v export` (sets each recording's viewport per animation) and 
 
 The CLI's `--width` / `--height` flags override the meta for ad-hoc runs. They're a coupled pair — passing either flag makes both override every per-animation viewport for the rest of the run.
 
+**Suggested canvas sizes.** Any viewport works — by default h2v fits the output within a 4K box (≤ 3840×2160) regardless of the canvas, so you're never *required* to author at a particular size. But for the **sharpest possible output, author at a canvas that scales to 4K by a whole number**, because then h2v renders at that exact integer device-scale-factor with no downscaling step at all:
+
+- **`1280x720`** → ×3 = 3840×2160 (4K). The default, and the crispest 16:9 option.
+- **`1920x1080`** → ×2 = 3840×2160 (4K). Also exact; nice if you prefer authoring at 1080p.
+- **`1080x1920`** (9:16) → ×2 = 2160×3840 (portrait 4K), `1080x1080` → ×2 = 2160×2160, etc.
+
+A canvas that *doesn't* divide evenly (e.g. `1600x900`) still produces clean 4K — h2v renders at the next integer scale up and supersamples down — it just does a bit of extra render work. So treat the sizes above as a recommendation for efficiency and maximum sharpness, not a requirement.
+
 ---
 
 ## Bundle format
