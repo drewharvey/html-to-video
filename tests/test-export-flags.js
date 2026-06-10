@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  REPO_ROOT,
   scenario,
   assert,
   assertEq,
@@ -407,6 +408,57 @@ scenario('odd --output-height → exit 2 (encoders need even dims)', ({ tmp }) =
   const fx = writeTinyFixture(tmp);
   const r = runH2v(['export', fx, '--output-height', '721'], { cwd: tmp });
   assertEq(r.code, 2, 'exit code');
+});
+
+// ===========================================================================
+// --gif (animated GIF export)
+// ===========================================================================
+
+scenario('--gif → gif codec, default 480p / 20fps', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp, { viewport: '640x360', duration: '0.5s' });
+  const r = runH2v(['export', fx, '--gif', '--slowdown', '1'], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const out = path.join(tmp, 'output', 'tiny.gif');
+  assert(fs.existsSync(out), 'expected output/tiny.gif');
+  const stream = ffprobe(out).streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.codec_name, 'gif', 'codec');
+  assertEq(stream.height, 480, 'default height (480p)');
+  assert(stream.width % 2 === 0, `even width (got ${stream.width})`);
+  assertEq(stream.avg_frame_rate, '20/1', 'default 20fps (exact 5cs delay)');
+});
+
+scenario('--gif --output-height 720 --fps 25 → overrides apply', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp, { viewport: '640x360', duration: '0.5s' });
+  const r = runH2v(['export', fx, '--gif', '--output-height', '720', '--fps', '25', '--slowdown', '1'], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const stream = ffprobe(path.join(tmp, 'output', 'tiny.gif')).streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.height, 720, 'height override');
+  assertEq(stream.avg_frame_rate, '25/1', 'fps override (25 = 4cs)');
+});
+
+scenario('--gif --quality-preset max → per-frame palette, much larger than draft', ({ tmp }) => {
+  // Use the SEEK fixture: its frames are deterministic (byte-identical every
+  // run) and it actually moves, so per-frame palette (max) clearly compounds
+  // over global 128-colour no-dither (draft). The play-driven tiny fixture is
+  // render-variable and near-static, which makes gif sizes too noisy to gate.
+  const fx = path.join(REPO_ROOT, 'tests', 'seek-test.html');
+  const max = path.join(tmp, 'max.gif');
+  const draft = path.join(tmp, 'draft.gif');
+  const rMax = runH2v(['export', fx, '--gif', '--quality-preset', 'max', '--out', max], { cwd: tmp });
+  const rDraft = runH2v(['export', fx, '--gif', '--quality-preset', 'draft', '--out', draft], { cwd: tmp });
+  assert(rMax.code === 0 && rDraft.code === 0, `exits: max ${rMax.code}, draft ${rDraft.code}`);
+  assert(fileSize(max) > fileSize(draft) * 2,
+    `max (per-frame palette) should dwarf draft: max=${fileSize(max)} draft=${fileSize(draft)}`);
+});
+
+scenario('--gif --alpha → exit 2 (mutually exclusive)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp);
+  assertEq(runH2v(['export', fx, '--gif', '--alpha'], { cwd: tmp }).code, 2, 'exit code');
+});
+
+scenario('--gif --codec libx264 → exit 2 (gif forces its codec)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp);
+  assertEq(runH2v(['export', fx, '--gif', '--codec', 'libx264'], { cwd: tmp }).code, 2, 'exit code');
 });
 
 summary();

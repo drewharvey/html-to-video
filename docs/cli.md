@@ -150,6 +150,17 @@ EXPORT FLAGS
                       cause white-halo / blown-out semi-transparent
                       regions in CapCut and similar editors). Requires
                       --alpha.
+  --gif               Export an animated GIF instead of a video. Forces the
+                      .gif container and a single-pass palette encode, and
+                      applies GIF defaults: 480p output and 20fps (override
+                      with --output-height / --scale and --fps). Quality
+                      (palette + dithering) comes from --quality-preset:
+                      max = per-frame palette; high = global palette, fine
+                      dither; standard = global + bayer dither (default);
+                      draft = 128 colours, no dither. GIF is 256-colour with
+                      no gradients/alpha — best for short, flat UI clips; for
+                      web, mp4/webm is smaller. Mutually exclusive with
+                      --alpha and --codec/--container.
   --slowdown <N>      Real-time slowdown factor (default: 6). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting video plays back at original speed.
@@ -361,6 +372,39 @@ When the integer render scale overshoots the target (the default 4K-fit on a non
 
 - **N must be even** for `--output-height` (encoders require even dimensions; width is auto-evened via `scale=-2`).
 - **Cost** is governed by the *render* scale, not the output. Hitting 4K from a 900px viewport renders at ×3 (4800×2700) then downscales — same capture cost as rendering over-4K, plus a near-free downscale (you encode *fewer* pixels, which offsets the resample). To go faster, target a height that lands on a smaller integer render scale.
+
+---
+
+## Animated GIF export
+
+`--gif` exports an animated GIF instead of a video:
+
+```
+h2v export clip.html --gif                          # 480p, 20fps, looping
+h2v export clip.html --gif --output-height 360      # smaller
+h2v export clip.html --gif --quality-preset high    # better palette
+```
+
+It's a cross-cutting mode flag (like `--alpha`): it forces the `.gif` container and a single-pass palette encode, and applies GIF-appropriate **defaults** — **480p** output and **20fps** — because 4K/60fps GIFs are enormous and pointless. Override resolution with `--output-height` / `--scale` and rate with `--fps`, exactly as for video.
+
+**Quality comes from `--quality-preset`** (no separate gif flag) — the tier maps to palette generation + dithering:
+
+| `--quality-preset` | Palette | Dither | Colours |
+|---|---|---|---|
+| `max` | per-frame | sierra2_4a | 256 |
+| `high` | global | sierra2_4a | 256 |
+| `standard` (default) | global | bayer | 256 |
+| `draft` | global | none | 128 |
+
+`max` gives the best colour (each frame gets its own palette, and the `max` preset's PNG capture feeds a cleaner source) at a large file-size cost; `draft` is the smallest/flattest. All tiers use `diff_mode=rectangle`, which only re-encodes changed regions — a big win for h2v's mostly-static UI animations.
+
+**Caveats** (GIF is an old format):
+- **256 colours, dithered** — gradients band or shimmer; GIF is for short, flat-colour UI clips, not cinematic or photographic content.
+- **Frame rate is quantized to centiseconds.** 20fps (5cs) and 25fps (4cs) are exact; rates that don't divide 100 (e.g. 15 → 6.67cs) get rounded and play slightly off. The default 20 is chosen to be exact.
+- **No real transparency** (only 1-bit on/off), so `--gif` and `--alpha` are mutually exclusive.
+- **File size grows fast** with resolution × fps × duration; the 480p/20fps defaults keep it sane. For the web, **mp4/webm is far smaller and higher quality** — reach for GIF only when you specifically need it (chat embeds, READMEs, Slack, etc.).
+
+`--gif` is mutually exclusive with `--codec`/`--container` (it forces its own).
 
 ---
 
