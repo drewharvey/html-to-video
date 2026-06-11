@@ -53,8 +53,18 @@ const SEEK_SHARD_MIN_FRAMES = 60;
 const CAPTURE_FORMATS = new Set(['jpeg', 'png']);
 const CAPTURE_EXT_FOR_FORMAT = { jpeg: 'jpg', png: 'png' };
 
-const VIDEO_CODECS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'prores_ks', 'qtrle', 'png']);
-const VIDEO_CONTAINERS = new Set(['mp4', 'mov', 'webm']);
+const VIDEO_CODECS = new Set(['libx264', 'libx265', 'libvpx-vp9', 'prores_ks', 'qtrle', 'png', 'gif']);
+const VIDEO_CONTAINERS = new Set(['mp4', 'mov', 'webm', 'gif']);
+
+// GIF defaults (applied when --gif is set, unless overridden). GIFs are small
+// web artifacts; 4K/60fps would be enormous and pointless, so --gif drops the
+// resolution to a 480-tall target and the rate to 20fps unless
+// --output-height/--scale or --fps say otherwise. 20 is chosen because GIF
+// frame delays are quantized to centiseconds — 20fps = exactly 5cs/frame, so
+// playback rate is exact; rates that don't divide 100 (e.g. 15 → 6.67cs) get
+// rounded by the encoder and play slightly off.
+const DEFAULT_GIF_HEIGHT = 480;
+const DEFAULT_GIF_FPS = 20;
 
 // Default container per codec, plus the full set of containers each
 // codec is allowed to land in. ProRes outside .mov breaks most NLEs;
@@ -68,6 +78,7 @@ const DEFAULT_CONTAINER_FOR_CODEC = {
   prores_ks: 'mov',
   qtrle: 'mov',
   png: 'mov',
+  gif: 'gif',
 };
 const ALLOWED_CONTAINERS_FOR_CODEC = {
   libx264: new Set(['mp4', 'mov']),
@@ -76,6 +87,7 @@ const ALLOWED_CONTAINERS_FOR_CODEC = {
   prores_ks: new Set(['mov']),
   qtrle: new Set(['mov']),
   png: new Set(['mov']),
+  gif: new Set(['gif']),
 };
 
 // Quality presets bundle codec, capture-format, capture-quality, and CRF
@@ -277,6 +289,17 @@ EXPORT FLAGS
                       cause white-halo / blown-out semi-transparent
                       regions in CapCut and similar editors). Requires
                       --alpha.
+  --gif               Export an animated GIF instead of a video. Forces the
+                      .gif container and a single-pass palette encode, and
+                      applies GIF defaults: ${DEFAULT_GIF_HEIGHT}p output and ${DEFAULT_GIF_FPS}fps (override
+                      with --output-height / --scale and --fps). Quality
+                      (palette + dithering) comes from --quality-preset:
+                      max = per-frame palette; high = global palette, fine
+                      dither; standard = global + bayer dither (default);
+                      draft = 128 colours, no dither. GIF is 256-colour with
+                      no gradients/alpha — best for short, flat UI clips; for
+                      web, mp4/webm is smaller. Mutually exclusive with
+                      --alpha and --codec/--container.
   --slowdown <N>      Real-time slowdown factor (default: ${DEFAULTS.slowdown}). The browser
                       runs animations at 1/N speed so screenshots can keep
                       up; the resulting video plays back at original speed.
@@ -437,6 +460,7 @@ function parseArgs(argv) {
     alpha: false,
     alphaMode: 'premultiplied',
     alphaModeExplicit: false,
+    gif: false,
     skipFfmpeg: false,
     dryRun: false,
     skipOpen: false,
@@ -501,6 +525,7 @@ function parseArgs(argv) {
     else if (a === '--container') opts.container = parseContainer(requireValue('--container'));
     else if (a === '--quality-preset') opts.qualityPreset = parseQualityPreset(requireValue('--quality-preset'));
     else if (a === '--alpha') opts.alpha = true;
+    else if (a === '--gif') opts.gif = true;
     else if (a === '--alpha-mode') {
       const v = requireValue('--alpha-mode');
       if (v !== 'straight' && v !== 'premultiplied') {
@@ -614,6 +639,49 @@ function resolveExportOpts(opts) {
   }
   if (!opts.crfExplicit && preset.crf != null) {
     opts.crf = preset.crf;
+  }
+
+  // --gif is a cross-cutting mode flag (like --alpha): it forces the gif
+  // codec + .gif container and applies GIF-appropriate defaults. Resolved
+  // here, before the codec/container compatibility check, so the forced
+  // values participate in that validation. `--codec gif` is treated
+  // identically. GIF quality (palette + dither) is derived from
+  // --quality-preset inside ffmpegStitch — no separate gif-quality flag; the
+  // preset's codec/crf are irrelevant to gif and ignored (like qtrle/png
+  // ignore crf), while its captureFormat still applies (so the `max` tier's
+  // PNG capture feeds a cleaner palette).
+  if (opts.gif) {
+    if (opts.codecExplicit && opts.codec !== 'gif') {
+      console.error(
+        `error: --gif cannot be combined with --codec ${opts.codec} ` +
+        `(--gif forces the gif codec). Drop one.`
+      );
+      process.exit(2);
+    }
+    opts.codec = 'gif';
+  }
+  if (opts.codec === 'gif') {
+    opts.gif = true;
+    if (opts.alpha) {
+      console.error(
+        'error: --gif and --alpha are mutually exclusive (GIF has only 1-bit ' +
+        'transparency, not a compositing alpha channel).'
+      );
+      process.exit(2);
+    }
+    if (opts.container != null && opts.container !== 'gif') {
+      console.error(
+        `error: --gif forces the .gif container (got --container ${opts.container}).`
+      );
+      process.exit(2);
+    }
+    opts.container = 'gif';
+    // GIF-appropriate defaults: low fps + modest resolution, unless the user
+    // asked for specific ones.
+    if (!opts.fpsExplicit) opts.fps = DEFAULT_GIF_FPS;
+    if (!opts.scaleExplicit && opts.outputHeight == null) {
+      opts.outputHeight = DEFAULT_GIF_HEIGHT;
+    }
   }
 
   // --alpha is a cross-cutting flag that constrains codec, container, and
@@ -1663,10 +1731,65 @@ function buildEncodeArgs(opts) {
   }
 }
 
+// GIF is a single-ffmpeg-pass palette pipeline (palettegen → paletteuse via
+// filter_complex — no temp palette file). Quality (palette + dithering) is
+// derived from the --quality-preset tier, the same way buildEncodeArgs derives
+// per-codec choices from the tier:
+//   max      per-frame palette (stats_mode=single + new=1), 256 colours,
+//            sierra2_4a dither — best colour, largest files (PNG capture via
+//            the max preset feeds it a cleaner source).
+//   high     global palette, 256 colours, sierra2_4a dither.
+//   standard global palette, 256 colours, bayer dither (default).
+//   draft    global palette, 128 colours, no dither — smallest/flattest.
+// diff_mode=rectangle re-encodes only changed regions (big win for h2v's
+// mostly-static UI animations). The leading scale (when downscaling — see
+// computeRenderPlan) lives INSIDE the filtergraph because palettegen needs
+// the final resolution.
+function buildGifFilterComplex(opts, job) {
+  const tier = opts.qualityPreset;
+  const perFrame = tier === 'max';
+  const maxColors = tier === 'draft' ? 128 : 256;
+  const dither =
+    tier === 'max' || tier === 'high' ? 'dither=sierra2_4a' :
+    tier === 'standard' ? 'dither=bayer:bayer_scale=3' :
+    'dither=none';
+  const palettegen = `palettegen=max_colors=${maxColors}${perFrame ? ':stats_mode=single' : ''}`;
+  const paletteuse = `paletteuse=${dither}:diff_mode=rectangle${perFrame ? ':new=1' : ''}`;
+
+  const pre = [];
+  if (job && job.outputHeight != null
+      && job.height * job.renderScale !== job.outputHeight) {
+    pre.push(`scale=-2:${job.outputHeight}:flags=lanczos`);
+  }
+  const preStr = pre.length ? pre.join(',') + ',' : '';
+  return `${preStr}split[a][b];[a]${palettegen}[p];[b][p]${paletteuse}`;
+}
+
 function ffmpegStitch(captureDir, outPath, opts, job) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
+
+    // GIF: separate single-pass palette pipeline. No -vf / buildEncodeArgs /
+    // faststart; -loop 0 makes it loop forever (the GIF norm).
+    if (opts.gif) {
+      const args = [
+        '-y',
+        '-loglevel', 'error',
+        '-framerate', String(opts.fps),
+        '-start_number', '1',
+        '-i', path.join(captureDir, '%04d.' + captureExt),
+        '-filter_complex', buildGifFilterComplex(opts, job),
+        '-loop', '0',
+        outPath,
+      ];
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'inherit', 'inherit'] });
+      proc.on('error', reject);
+      proc.on('exit', (code) =>
+        code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code}`))
+      );
+      return;
+    }
     // -movflags +faststart reorders the moov atom to the start of the
     // file so playback can begin while the file is still downloading.
     // Critical for web embedding; harmless for local playback. Only
@@ -2665,7 +2788,9 @@ async function main() {
   const alphaSuffix = opts.alpha
     ? ` + alpha (${opts.alphaMode === 'premultiplied' ? 'pre-mult' : 'straight'})`
     : '';
-  if (opts.codec === 'prores_ks') {
+  if (opts.codec === 'gif') {
+    codecDesc = `gif (${tier} palette)`;
+  } else if (opts.codec === 'prores_ks') {
     const proresProfile = (opts.alpha || tier === 'max') ? '4 (4444)' : '3 (HQ)';
     codecDesc = `${opts.codec} profile ${proresProfile}${alphaSuffix}`;
   } else if (opts.codec === 'png' || opts.codec === 'qtrle') {

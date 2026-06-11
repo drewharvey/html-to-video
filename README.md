@@ -32,6 +32,7 @@ h2v export --quality-preset high          # higher-fidelity tier
 h2v export --alpha                        # transparent .mov (PNG-in-MOV,
                                           # lossless, drops onto any NLE)
 h2v export --alpha --codec prores_ks      # opt into ProRes 4444 instead
+h2v export --gif                          # animated GIF (480p/20fps, looping)
 h2v export --theme all                    # one video per declared theme
 h2v export --dry-run                      # print plan, no recording
 
