@@ -125,13 +125,40 @@ scenario('seek-test.html: auto-detects seek driver and scrubs frame-perfect', ({
 
 // Frame-sharding: --concurrency on a single seek animation splits its frames
 // across browsers (seek is order-independent, so disjoint ranges run in
-// parallel and reassemble). The output must be byte-identical to a
-// single-worker recording — sharding is a speedup, never a content change.
-function framesIdentical(videoA, videoB, times) {
+// parallel and reassemble). Sharding must not change the CONTENT — frame N
+// shows the same scene whether captured in one pass or by a shard.
+//
+// We compare with a small tolerance rather than byte-for-byte. Byte-identity
+// would be testing Chromium's cross-process rasterization determinism, not
+// h2v: two separate browser processes don't guarantee bit-identical text
+// anti-aliasing / font hinting (it differs by platform — matched on macOS,
+// drifted by a sub-pixel on Linux CI). The real invariant is "same content",
+// so we flag a frame only when a meaningful FRACTION of pixels differ. A real
+// sharding bug (e.g. a missing warm-up replay mis-positions a whole bar)
+// moves ~5% of pixels — far above sub-pixel AA jitter (well under 1%).
+const PIXEL_DIFF_THRESHOLD = 12;   // per-channel 0-255; ignore AA micro-diffs
+const MAX_DIFF_FRACTION = 0.02;    // >2% of pixels differing = real change
+
+function frameDiffFraction(a, b) {
+  if (a.length !== b.length) return 1;
+  let differing = 0;
+  const pixels = a.length / 4;
+  for (let i = 0; i < a.length; i += 4) {
+    if (Math.abs(a[i] - b[i]) > PIXEL_DIFF_THRESHOLD ||
+        Math.abs(a[i + 1] - b[i + 1]) > PIXEL_DIFF_THRESHOLD ||
+        Math.abs(a[i + 2] - b[i + 2]) > PIXEL_DIFF_THRESHOLD) {
+      differing++;
+    }
+  }
+  return differing / pixels;
+}
+
+// Returns { t, fraction } for the first frame that differs beyond tolerance,
+// or null if every sampled frame matches.
+function framesMatch(videoA, videoB, times) {
   for (const t of times) {
-    const a = extractFrameRgba(videoA, t);
-    const b = extractFrameRgba(videoB, t);
-    if (a.length !== b.length || !a.equals(b)) return t;
+    const f = frameDiffFraction(extractFrameRgba(videoA, t), extractFrameRgba(videoB, t));
+    if (f > MAX_DIFF_FRACTION) return { t, fraction: f };
   }
   return null;
 }
@@ -151,9 +178,11 @@ scenario('seek-test.html: --concurrency 2 shards and matches single-worker', ({ 
     `expected frame-sharding across 2 browsers; got:\n${r2.stdout}`
   );
 
-  // Byte-identical frames at start, mid, end.
-  const diff = framesIdentical(v1, v2, [0.1, 1.0, 1.9]);
-  assert(diff === null, `sharded output differs from single-worker at t=${diff}s`);
+  // Same content at start, mid, end (tolerant — see framesMatch).
+  const diff = framesMatch(v1, v2, [0.1, 1.0, 1.9]);
+  assert(diff === null,
+    diff && `sharded output differs from single-worker at t=${diff.t}s ` +
+    `(${(diff.fraction * 100).toFixed(1)}% of pixels)`);
 });
 
 // Regression guard for the warm-up replay in captureSeekRange. This fixture's
@@ -173,8 +202,10 @@ scenario('seek-stateful-test.html: sharded matches single-worker (warm-up replay
 
   // The order-dependent bar position must match across the shard boundary
   // (frame 60). Without warm-up, the second shard's frames would be wrong.
-  const diff = framesIdentical(v1, v2, [0.1, 1.0, 1.1, 1.5, 1.9]);
-  assert(diff === null, `stateful sharded output differs from single-worker at t=${diff}s (warm-up replay broken?)`);
+  const diff = framesMatch(v1, v2, [0.1, 1.0, 1.1, 1.5, 1.9]);
+  assert(diff === null,
+    diff && `stateful sharded output differs from single-worker at t=${diff.t}s ` +
+    `(${(diff.fraction * 100).toFixed(1)}% of pixels) — warm-up replay broken?`);
 });
 
 summary();
