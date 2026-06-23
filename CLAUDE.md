@@ -186,6 +186,21 @@ The script is `scripts/sync-help-docs.js`. It spawns `node cli.js --help`, captu
 - `omitBackground: true` on `Page.captureScreenshot` is the load-bearing bit on the capture side for `--alpha` — it tells Chromium to skip painting its default white viewport, exposing the page's own paint (or transparency where the page paints nothing). It only works with `type: 'png'`; the JPEG branch in `recordJob` doesn't take an `omitBackground` option and JPEG can't carry alpha anyway. The pairing is enforced upstream in `resolveExportOpts`. If you ever add a third capture format, don't add an `omitBackground` knob to the JPEG branch — it's load-bearing-orthogonal.
 - `libvpx-vp9` + `yuva420p` for WebM alpha — encoder advertises support but ffmpeg's wrapper silently drops the alpha plane in the simple invocation (verified empirically: output `pix_fmt=yuv420p`, round-tripped alpha is uniformly 255). Working VP9-with-alpha needs a multi-stream remux that's fragile across ffmpeg versions; deferred. Don't add `libvpx-vp9` to the `--alpha`-allowed codec set without re-verifying alpha actually round-trips through the produced `.webm`.
 
+## Review-page icons (how to add or change one)
+
+The `h2v review` page (`buildReviewHtml` in `cli.js`) uses **inlined [Lucide](https://lucide.dev) SVG icons** — copied into the source, **not** an npm/font dependency. This is mandatory: the review page must stay a single self-contained HTML file with **zero external requests** (same constraint as the animations themselves). Never add an icon via a CDN `<link>`/`<script>`, a web font, or a runtime `fetch` — the icon must be inline SVG markup.
+
+**To add a new icon:**
+
+1. Find it at https://lucide.dev (prefer Lucide for visual consistency with the existing set). Copy the raw SVG. Keep its attributes: `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"`, and add `aria-hidden="true"`. `stroke="currentColor"` is load-bearing — it makes the icon inherit the button's text color (incl. hover and light/dark `color-scheme`); don't hardcode a stroke color. `aria-hidden="true"` keeps the decorative glyph out of the accessibility tree — every icon button already has a visible text label and a `title`, so the icon must not be separately announced.
+2. For card buttons (built in JS), define it as an `ICON_<NAME>` string constant next to `ICON_MAXIMIZE` / `ICON_EXTERNAL` and inject via `innerHTML`. For static-markup buttons (e.g. `#resetAll`), inline the `<svg>` directly in the HTML template string.
+3. Sizing/alignment is already handled by `.card-btn svg` (13px) and `button.ctl svg` (14px) plus `inline-flex; gap` on the buttons — no per-icon CSS needed.
+4. A different (non-Lucide) library is acceptable *if* it's similarly permissively licensed and you still inline the SVG — but matching Lucide keeps the chrome visually uniform.
+
+**Icon placement convention** (don't "fix" the asymmetry — it's intentional): **leading** icon (before the label) for icons that describe the *action* (`maximize` → Full screen, `rotate-ccw` → Reset all); **trailing** icon (after the label) for icons that describe the *destination/consequence* (`external-link` → Actual size, because it opens in a new tab). This matches Material 3 / Apple HIG / Carbon / Polaris. New action icons lead; new-tab / direction / disclosure (chevron) icons trail.
+
+Regression coverage: `tests/test-review.js` scenario 12 asserts the inlined Lucide path data and `stroke="currentColor"` — so swapping back to Unicode glyphs or breaking an icon fails `npm run test:review`.
+
 ## Operational notes
 
 - The user typically generates animations at claude.ai (web), then runs `h2v export` locally. The expected workflow is short animations (5-30 seconds) processed one at a time or in small batches.

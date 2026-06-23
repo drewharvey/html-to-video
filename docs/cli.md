@@ -537,6 +537,13 @@ When `--out <path>` is passed, h2v switches to **portable mode**: every animatio
 
 Bundle frames (animations inside a single `ANIMATION_START` / `ANIMATION_END`-marked bundle file) have no individual file on disk, so they always inline as srcdoc — even in live mode. To refresh those after edits, re-run `h2v review <bundle>`.
 
+**Sizing.** Each preview renders its iframe at the animation's *natural* design viewport (from `<meta name="h2v-viewport">` or the bundle marker's `viewport=`, default `1280×720`) and then scales the whole frame down to fit its card. Because the page sees the exact viewport it was authored for, nothing is clipped — any aspect ratio works, including square (`1080×1080`) and vertical (`1080×1920`). Portrait clips are capped to stay within the window. Each card's header shows the animation's aspect ratio and resolution (e.g. `16:9 · 1920×1080`).
+
+**Per-card view controls.** Each card has two buttons in its header:
+
+- **Full screen** — opens that single animation full screen via the browser Fullscreen API, scaled to fill the display and letterboxed on black. Press `Esc` to exit.
+- **Actual size** — opens the animation at its native 1:1 resolution in a new browser tab (the `↗` marks the new tab). The animation is embedded in a scrollable wrapper, so if it's larger than the window you can scroll to see all of it — including animations whose own `<body>` sets `overflow: hidden`.
+
 The `data-h2v-recording` and `data-h2v-hide` hooks are **not** applied during review — controls in the embedded animations stay visible and interactive.
 
 ---

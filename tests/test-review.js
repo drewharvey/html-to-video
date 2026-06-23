@@ -262,4 +262,94 @@ scenario('--out: single file is inlined as srcdoc (portable)', ({ tmp }) => {
     `--out entry must NOT carry src (defeats portability); got ${JSON.stringify(anims[0]).slice(0, 200)}`);
 });
 
+// ---------------------------------------------------------------------------
+// 11. Scale-to-fit preview structure. The review page must render each
+//     iframe at its natural design pixel size inside a .frame-stage and
+//     shrink it via transform: scale() driven by a ResizeObserver — this
+//     is what prevents non-1280x720 / vertical animations from being
+//     clipped. Assert the load-bearing pieces are present.
+// ---------------------------------------------------------------------------
+scenario('review page uses scale-to-fit stage (no clipping for any aspect)', ({ tmp }) => {
+  const file = path.join(tmp, 'tall.html');
+  fs.writeFileSync(file,
+    '<html><head><meta name="h2v-duration" content="1s"><meta name="h2v-viewport" content="1080x1920"></head><body>x</body></html>');
+  const out = path.join(tmp, 'review.html');
+  const r = runH2v(['review', file, '--no-open', '--out', out]);
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const html = fs.readFileSync(out, 'utf-8');
+  assert(html.includes('frame-stage'), 'expected a .frame-stage wrapper');
+  assert(/transform:\s*scale\(var\(--fit-scale/.test(html),
+    'expected iframe transform: scale(var(--fit-scale ...)) for scale-to-fit');
+  assert(html.includes('new ResizeObserver'),
+    'expected a ResizeObserver to keep --fit-scale in sync with stage width');
+  assert(html.includes('--max-stage-h'),
+    'expected --max-stage-h clamp so portrait clips stay in the window');
+});
+
+// ---------------------------------------------------------------------------
+// 12. Per-card view controls: each animation gets a "Full screen" button
+//     (Fullscreen API) and an "Actual size" native-resolution button that
+//     opens in a new tab (↗). The header also shows the aspect ratio.
+//     Assert the load-bearing pieces are present in the generated page.
+// ---------------------------------------------------------------------------
+scenario('review page renders full-screen + actual-size buttons per card', ({ tmp }) => {
+  const file = path.join(tmp, 'clip.html');
+  fs.writeFileSync(file,
+    '<html><head><meta name="h2v-duration" content="1s"><meta name="h2v-viewport" content="1920x1080"></head><body>x</body></html>');
+  const out = path.join(tmp, 'review.html');
+  const r = runH2v(['review', file, '--no-open', '--out', out]);
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const html = fs.readFileSync(out, 'utf-8');
+  assert(html.includes('Full screen'), 'expected a "Full screen" button');
+  assert(html.includes('requestFullscreen'),
+    'expected the Fullscreen API to drive the full-screen button');
+  assert(/:fullscreen/.test(html), 'expected a :fullscreen CSS rule for letterboxing');
+  assert(html.includes('openNative'),
+    'expected an openNative() helper for native-resolution viewing');
+  // Native view must open a scrollable wrapper (window.open + an iframe),
+  // not the raw file — otherwise the animation's own body{overflow:hidden}
+  // propagates to the viewport and the oversized canvas can't be scrolled.
+  assert(html.includes('window.open'),
+    'expected openNative to open a wrapper tab via window.open');
+  assert(/createElement\(['"]iframe['"]\)/.test(html),
+    'expected the native view to embed the animation in a native-sized iframe');
+  assert(html.includes('Math.min'),
+    'expected min(w,h) fit so fullscreen letterboxes instead of overflowing');
+  // The native button now reads "Actual size", not "1:1".
+  assert(html.includes('Actual size'),
+    'expected the native button to read "Actual size"');
+  // Icons are inlined Lucide SVGs (no external dependency). Check for the
+  // distinctive path data of the maximize and external-link glyphs.
+  assert(html.includes('M8 3H5a2 2 0 0 0-2 2v3'),
+    'expected the inlined Lucide "maximize" icon on the full-screen button');
+  assert(html.includes('M15 3h6v6'),
+    'expected the inlined Lucide "external-link" icon on the actual-size button');
+  assert(html.includes('stroke="currentColor"'),
+    'expected inline SVG icons that inherit the button color');
+  // Aspect ratio is shown next to the resolution, computed via aspectLabel.
+  assert(html.includes('aspectLabel'),
+    'expected an aspectLabel() helper to show the aspect ratio by the resolution');
+});
+
+// ---------------------------------------------------------------------------
+// 13. Header de-duplication: for a single file id === source === name, so
+//     the source span (which would just repeat the title) is omitted.
+//     Bundle frames carry a "bundle/id" source, which IS shown.
+// ---------------------------------------------------------------------------
+scenario('single-file header omits the duplicate source span', ({ tmp }) => {
+  const file = path.join(tmp, 'solo.html');
+  fs.writeFileSync(file,
+    '<html><head><meta name="h2v-duration" content="1s"></head><body>x</body></html>');
+  const out = path.join(tmp, 'review.html');
+  const r = runH2v(['review', file, '--no-open', '--out', out]);
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const html = fs.readFileSync(out, 'utf-8');
+  // The guard that drops the duplicate must be present.
+  assert(/a\.source !== label/.test(html),
+    'expected the source-vs-name de-duplication guard');
+});
+
 summary();

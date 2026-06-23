@@ -1898,6 +1898,9 @@ function buildReviewHtml(animations, { inline }) {
   --bg: #f4f4f5; --card-bg: #ffffff; --border: #d8d8dc;
   --text: #18181b; --muted: #6a6a72;
   --btn-bg: #ececef; --btn-hover: #dedee2;
+  /* Tallest a preview stage may grow to, so 9:16 / portrait animations
+     stay within the window instead of running off the bottom. */
+  --max-stage-h: 82vh;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -1924,11 +1927,16 @@ body {
   color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 13px;
 }
 button.ctl {
+  display: inline-flex; align-items: center; gap: 7px;
   padding: 8px 14px; background: var(--btn-bg); border: 1px solid var(--border);
   border-radius: 8px; color: var(--text); font-size: 13px; cursor: pointer;
   font-family: monospace;
 }
 button.ctl:hover { background: var(--btn-hover); }
+/* Icons are inlined Lucide SVGs (https://lucide.dev, ISC licensed) —
+   copied in, not a dependency, so the review page stays self-contained.
+   They use stroke="currentColor", so they take the button's text color. */
+button.ctl svg { width: 14px; height: 14px; display: block; }
 main {
   max-width: 1100px; margin: 0 auto; padding: 24px 20px 80px;
   display: grid; gap: 24px;
@@ -1938,7 +1946,7 @@ main {
   border-radius: 12px; overflow: hidden;
 }
 .card-head {
-  display: flex; align-items: baseline; gap: 12px;
+  display: flex; align-items: center; gap: 12px;
   padding: 12px 16px; border-bottom: 1px solid var(--border);
 }
 .card-head .name {
@@ -1947,28 +1955,73 @@ main {
 .card-head .source {
   font-family: monospace; font-size: 11px; color: var(--muted);
 }
-/* Iframe size driven by per-animation viewport via inline style:
-   - width clamped to: container (100%), natural width, and "the width
-     that makes height ≤ 90vh for this aspect"
-   - aspect-ratio preserves the design proportions while scaling */
-.frame-iframe {
-  display: block;
+.card-actions { display: flex; gap: 6px; flex: none; }
+.card-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: monospace; font-size: 11px; padding: 5px 9px;
+  background: var(--btn-bg); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--muted); cursor: pointer;
+  white-space: nowrap;
+}
+.card-btn:hover { background: var(--btn-hover); color: var(--text); }
+.card-btn svg { width: 13px; height: 13px; display: block; flex: none; }
+/* Scale-to-fit preview.
+
+   The naive approach — sizing the iframe's CSS box to the design aspect
+   ratio — clips any non-responsive animation, because an iframe's CSS
+   pixel size IS its internal viewport: a 1080px-wide canvas squeezed into
+   a 400px iframe renders into a 400px viewport and overflows.
+
+   So instead the iframe is rendered at its NATURAL design pixel size
+   (--anim-w × --anim-h px) — the page sees exactly the viewport it was
+   authored for, nothing is clipped — then visually shrunk to fit via
+   transform: scale(). The stage centres that fixed-size iframe with flex
+   and scales it about its centre; a ResizeObserver keeps --fit-scale =
+   min(stageW/animW, stageH/animH) so it fits inside both axes. In normal
+   flow the stage's aspect-ratio makes both ratios equal (exact fill); in
+   fullscreen the screen aspect differs, so the min letterboxes cleanly.
+
+   Stage width is clamped to: container (100%), natural width (never
+   upscale past 1:1), and the width whose scaled height == --max-stage-h
+   (keeps portrait clips inside the window). */
+.frame-stage {
+  position: relative;
   width: min(
     100%,
     calc(var(--anim-w) * 1px),
-    calc(90vh * var(--anim-w) / var(--anim-h))
+    calc(var(--max-stage-h) * var(--anim-w) / var(--anim-h))
   );
   aspect-ratio: var(--anim-w) / var(--anim-h);
+  margin: 0 auto;
+  overflow: hidden;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Fullscreen: the stage fills the display; the min() in --fit-scale
+   letterboxes the animation on black, centred by the flex above. */
+.frame-stage:fullscreen { width: 100vw; height: 100vh; aspect-ratio: auto; background: #000; }
+.frame-stage:-webkit-full-screen { width: 100vw; height: 100vh; aspect-ratio: auto; background: #000; }
+.frame-iframe {
+  flex: none;
+  width: calc(var(--anim-w) * 1px);
+  height: calc(var(--anim-h) * 1px);
+  transform-origin: center center;
+  transform: scale(var(--fit-scale, 1));
   border: 0;
   background: var(--bg);
-  margin: 0 auto;
+}
+.card-head .dims {
+  font-family: monospace; font-size: 11px; color: var(--muted);
+  white-space: nowrap;
 }
 </style>
 </head>
 <body>
 <header class="page-header">
   <h1>h2v review <small>${countLabel}</small></h1>
-  <button class="ctl" id="resetAll">↻ Reset all</button>
+  <button class="ctl" id="resetAll"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset all</span></button>
 </header>
 <main id="cards"></main>
 <script>
@@ -1995,17 +2048,109 @@ function reload(iframe, a) {
 }
 
 const main = document.getElementById('cards');
+
+// Inlined Lucide icons (https://lucide.dev, ISC licensed) — copied in, not
+// a dependency. stroke="currentColor" makes them inherit the button color.
+const ICON_MAXIMIZE = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+const ICON_EXTERNAL = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/></svg>';
+
+// Reduced aspect-ratio label, e.g. 1920×1080 → "16:9", 1080×1920 → "9:16".
+function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+function aspectLabel(w, h) {
+  const g = gcd(w, h) || 1;
+  return (w / g) + ':' + (h / g);
+}
+
+// Set --fit-scale = min(stageW/animW, stageH/animH) so the natural-size
+// iframe is shrunk to fit within both axes — exact fill in normal flow,
+// letterbox in fullscreen (where the screen aspect differs).
+function fitStage(stage) {
+  const animW = parseFloat(stage.style.getPropertyValue('--anim-w'));
+  const animH = parseFloat(stage.style.getPropertyValue('--anim-h'));
+  if (animW > 0 && animH > 0) {
+    const s = Math.min(stage.clientWidth / animW, stage.clientHeight / animH);
+    stage.style.setProperty('--fit-scale', s);
+  }
+}
+const fitObserver = new ResizeObserver((entries) => {
+  for (const entry of entries) fitStage(entry.target);
+});
+
+// Request fullscreen on a stage (Safari needs the webkit-prefixed call).
+function goFullscreen(stage) {
+  const req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+  if (req) req.call(stage);
+}
+
+// Open a single animation at its native (1:1) resolution in a new tab.
+//
+// We can't just point the tab at the animation file: its body usually sets
+// overflow:hidden, which propagates to the viewport and prevents scrolling
+// to reach parts of the canvas that overflow the window. Instead we open a
+// blank tab (about:blank inherits this file:// page's origin, so it can host
+// a file:// iframe) and write a minimal wrapper whose document scrolls
+// normally, embedding the animation in an iframe sized to its native pixels.
+// The iframe's own overflow no longer matters — the wrapper provides scroll.
+function openNative(a) {
+  const tab = window.open('', '_blank');
+  if (!tab) return; // popup blocked
+  const w = a.viewport.w, h = a.viewport.h;
+  const d = tab.document;
+  d.open();
+  d.write(
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<style>html,body{margin:0;background:#0b0b0c;}' +
+    'body{min-height:100vh;}' +
+    'iframe{display:block;border:0;background:#0b0b0c;margin:0 auto;' +
+    'width:' + w + 'px;height:' + h + 'px;}' +
+    '</style></head><body></body></html>'
+  );
+  d.close();
+  d.title = a.id + ' — ' + w + '×' + h;
+  const frame = d.createElement('iframe');
+  frame.width = w;
+  frame.height = h;
+  if (a.src) { frame.src = a.src; } else { frame.srcdoc = a.html; }
+  d.body.appendChild(frame);
+}
+
+// Refit the fullscreen stage on enter/exit (RO usually catches it, but
+// webkit fullscreen transitions can need an explicit nudge).
+['fullscreenchange', 'webkitfullscreenchange'].forEach((ev) => {
+  document.addEventListener(ev, () => {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl && fsEl.classList && fsEl.classList.contains('frame-stage')) {
+      fitStage(fsEl);
+    }
+  });
+});
+
 ANIMATIONS.forEach((a) => {
   const card = document.createElement('article');
   card.className = 'card';
   const head = document.createElement('div');
   head.className = 'card-head';
+  const label = a.title || a.id;
   const name = document.createElement('span');
   name.className = 'name';
-  name.textContent = a.title || a.id;
-  const source = document.createElement('span');
-  source.className = 'source';
-  source.textContent = a.source;
+  name.textContent = label;
+  // Show the source only when it adds something beyond the name. For a
+  // single file id === source === name, so it would just be a duplicate;
+  // bundle frames carry "bundle/id", which is worth showing.
+  let source = null;
+  if (a.source && a.source !== label) {
+    source = document.createElement('span');
+    source.className = 'source';
+    source.textContent = a.source;
+  }
+  const dims = document.createElement('span');
+  dims.className = 'dims';
+  dims.textContent =
+    aspectLabel(a.viewport.w, a.viewport.h) + '  ·  ' + a.viewport.w + '×' + a.viewport.h;
+  const stage = document.createElement('div');
+  stage.className = 'frame-stage';
+  stage.style.setProperty('--anim-w', a.viewport.w);
+  stage.style.setProperty('--anim-h', a.viewport.h);
   const iframe = document.createElement('iframe');
   iframe.className = 'frame-iframe';
   iframe.title = a.title || a.id;
@@ -2013,9 +2158,29 @@ ANIMATIONS.forEach((a) => {
   iframe.style.setProperty('--anim-w', a.viewport.w);
   iframe.style.setProperty('--anim-h', a.viewport.h);
   loadInto(iframe, a);
-  head.append(name, source);
-  card.append(head, iframe);
+  stage.appendChild(iframe);
+
+  const actions = document.createElement('div');
+  actions.className = 'card-actions';
+  const fsBtn = document.createElement('button');
+  fsBtn.className = 'card-btn';
+  fsBtn.innerHTML = ICON_MAXIMIZE + '<span>Full screen</span>';
+  fsBtn.title = 'View this animation full screen (Esc to exit)';
+  fsBtn.addEventListener('click', () => goFullscreen(stage));
+  const nativeBtn = document.createElement('button');
+  nativeBtn.className = 'card-btn';
+  // external-link icon signals it opens in a new tab.
+  nativeBtn.innerHTML = '<span>Actual size</span>' + ICON_EXTERNAL;
+  nativeBtn.title = 'Open at actual size (' + a.viewport.w + '×' + a.viewport.h + ', 100%) in a new tab';
+  nativeBtn.addEventListener('click', () => openNative(a));
+  actions.append(fsBtn, nativeBtn);
+
+  head.append(name);
+  if (source) head.append(source);
+  head.append(dims, actions);
+  card.append(head, stage);
   main.appendChild(card);
+  fitObserver.observe(stage);
 });
 
 document.getElementById('resetAll').addEventListener('click', () => {
