@@ -1422,6 +1422,24 @@ function screenshotOptsFor(opts) {
     : { type: 'jpeg', quality: opts.captureQuality };
 }
 
+// Write the current page render as frame `n` (1-based on disk to match
+// ffmpegStitch's -start_number 1). Shared by both capture loops.
+async function writeFrame(page, screenshotOpts, captureDir, captureExt, n) {
+  await page.screenshot({
+    ...screenshotOpts,
+    path: path.join(captureDir, String(n).padStart(4, '0') + '.' + captureExt),
+  });
+}
+
+// Throttled capture-progress line: once per second of footage (done % fps)
+// and on the final frame. quiet suppresses it (sharded workers, which would
+// clobber each other's \r line).
+function reportProgress(done, total, fps, quiet) {
+  if (!quiet && (done % fps === 0 || done === total)) {
+    process.stdout.write(`\r    captured ${done}/${total}`);
+  }
+}
+
 // Seek capture for the frame subrange [frameStart, frameEnd). Each frame is
 // `seek(ms)` then screenshot, no pacing sleep — wall time is just the
 // screenshots. Frames span the job's [0, totalFrames): tᵢ = i × (1000/fps),
@@ -1448,15 +1466,8 @@ async function captureSeekRange(
   for (let i = frameStart; i < frameEnd; i++) {
     const t = (i * 1000) / opts.fps;
     await page.evaluate((ms) => window.seek(ms), t);
-    const fileName = String(i + 1).padStart(4, '0') + '.' + captureExt;
-    await page.screenshot({
-      ...screenshotOpts,
-      path: path.join(captureDir, fileName),
-    });
-    const done = i + 1;
-    if (!quiet && (done % opts.fps === 0 || done === job.totalFrames)) {
-      process.stdout.write(`\r    captured ${done}/${job.totalFrames}`);
-    }
+    await writeFrame(page, screenshotOpts, captureDir, captureExt, i + 1);
+    reportProgress(i + 1, job.totalFrames, opts.fps, quiet);
   }
 }
 
@@ -1473,14 +1484,8 @@ async function capturePlay(
     const target = startReal + i * tickMsReal;
     const wait = target - Date.now();
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    const fileName = String(i).padStart(4, '0') + '.' + captureExt;
-    await page.screenshot({
-      ...screenshotOpts,
-      path: path.join(captureDir, fileName),
-    });
-    if (!quiet && (i % opts.fps === 0 || i === job.totalFrames)) {
-      process.stdout.write(`\r    captured ${i}/${job.totalFrames}`);
-    }
+    await writeFrame(page, screenshotOpts, captureDir, captureExt, i);
+    reportProgress(i, job.totalFrames, opts.fps, quiet);
   }
 }
 
