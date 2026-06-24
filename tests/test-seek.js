@@ -208,4 +208,39 @@ scenario('seek-stateful-test.html: sharded matches single-worker (warm-up replay
     `(${(diff.fraction * 100).toFixed(1)}% of pixels) — warm-up replay broken?`);
 });
 
+// "Does NOT shard" invariants — the inverse of the sharding tests above.
+// Frame-sharding is gated to seek jobs that are big enough; assert the two
+// documented cases that must stay single-browser, via the driver log (no
+// "across N browsers" fan-out line). Short --duration keeps these cheap.
+
+// A play (non-seek) animation can't be sharded (real-time, sequential). With
+// --concurrency >1 on a single job it must collapse to one browser.
+scenario('play animation + --concurrency 2 → single browser (no shard)', ({ tmp }) => {
+  const r = runH2v([
+    'export', 'tests/sync-test.html',
+    '--width', String(VW), '--height', String(VH), '--scale', '1',
+    '--duration', '0.5',
+    '--concurrency', '2',
+    '--out', path.join(tmp, 'play.mp4'),
+  ], { cwd: REPO_ROOT });
+  assert(r.code === 0, `export exit ${r.code}; stderr: ${r.stderr}`);
+  assert(/driver:\s*slowdown/.test(r.stdout), `expected play (slowdown) driver; got:\n${r.stdout}`);
+  assert(!/across\s+\d+\s+browsers/.test(r.stdout), `play job must not shard; got:\n${r.stdout}`);
+});
+
+// A seek job below SEEK_SHARD_MIN_FRAMES (60) isn't worth splitting → K=1.
+// 0.5s × 60fps = 30 frames < 60, so even --concurrency 4 stays single-browser.
+scenario('seek animation below shard threshold + --concurrency 4 → no shard', ({ tmp }) => {
+  const r = runH2v([
+    'export', 'tests/seek-test.html',
+    '--width', String(VW), '--height', String(VH), '--scale', '1',
+    '--duration', '0.5',
+    '--concurrency', '4',
+    '--out', path.join(tmp, 'small-seek.mp4'),
+  ], { cwd: REPO_ROOT });
+  assert(r.code === 0, `export exit ${r.code}; stderr: ${r.stderr}`);
+  assert(/driver:\s*seek/.test(r.stdout), `expected seek driver; got:\n${r.stdout}`);
+  assert(!/across\s+\d+\s+browsers/.test(r.stdout), `sub-threshold seek must not shard; got:\n${r.stdout}`);
+});
+
 summary();

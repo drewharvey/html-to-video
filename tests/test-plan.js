@@ -368,6 +368,58 @@ scenario('captureKey collision (bundle frame vs file) → exit 1', ({ tmp }) => 
 });
 
 // ===========================================================================
+// --capture-quality is JPEG-only. The check must fire ONLY when the user
+// passed --capture-quality explicitly — the standard preset's default of 95
+// must NOT trip it under --capture-format png (the *Explicit gating canary).
+// ===========================================================================
+scenario('--capture-format png + explicit --capture-quality → exit 2', ({ tmp }) => {
+  const file = path.join(tmp, 'clip.html');
+  fs.writeFileSync(file, '<html><head><meta name="h2v-duration" content="1s"></head></html>');
+  const r = runH2v(['export', file, '--capture-format', 'png', '--capture-quality', '50', '--dry-run'], { cwd: tmp });
+  assertEq(r.code, 2, 'exit code');
+  assert(/only applies to JPEG/.test(r.stderr), `stderr: ${r.stderr}`);
+});
+
+scenario('--capture-format png alone → exit 0 (preset default 95 not treated as explicit)', ({ tmp }) => {
+  const file = path.join(tmp, 'clip.html');
+  fs.writeFileSync(file, '<html><head><meta name="h2v-duration" content="1s"></head></html>');
+  const r = runH2v(['export', file, '--capture-format', 'png', '--dry-run'], { cwd: tmp });
+  assertEq(r.code, 0, `exit ${r.code}; stderr: ${r.stderr}`);
+});
+
+// ===========================================================================
+// --paste path derivation. The fixed `paste` basename lands single files at
+// output/paste.<ext> and bundles at output/paste/<id>.<ext>. (Dry-run, piped
+// HTML via stdin — no browser.)
+// ===========================================================================
+scenario('--paste single file → output/paste.mp4', () => {
+  const r = runH2v(['export', '--paste', '--dry-run'], {
+    input: '<!DOCTYPE html><html><head><meta name="h2v-duration" content="1s"></head><body>x</body></html>',
+  });
+  assertEq(r.code, 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  assert(/output\/paste\.mp4/.test(r.stdout), `stdout: ${r.stdout}`);
+});
+
+scenario('--paste bundle → output/paste/<id>.mp4', () => {
+  const r = runH2v(['export', '--paste', '--dry-run'], {
+    input:
+      '<!-- ===== ANIMATION_START id="intro" capture_duration="1s" ===== -->\n' +
+      '<html><body>x</body></html>\n' +
+      '<!-- ===== ANIMATION_END ===== -->\n',
+  });
+  assertEq(r.code, 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  assert(/output\/paste\/intro\.mp4/.test(r.stdout), `stdout: ${r.stdout}`);
+});
+
+scenario('--paste with a positional path arg → exit 2', () => {
+  const r = runH2v(['export', '--paste', 'some.html'], {
+    input: '<html></html>',
+  });
+  assertEq(r.code, 2, 'exit code');
+  assert(/cannot be combined with positional/.test(r.stderr), `stderr: ${r.stderr}`);
+});
+
+// ===========================================================================
 // --paste temp-dir cleanup. The paste dir is created early in main(), before
 // the --dry-run early return and the buildPlan/validatePlan process.exit()
 // paths — a finally alone would leak it. A process.on('exit') guard must
