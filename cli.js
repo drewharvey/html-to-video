@@ -1475,6 +1475,20 @@ function driverLogLine(driver, opts) {
     : `slowdown ${opts.slowdown}×`;
 }
 
+// Capture the entire job [0, totalFrames) on an already-prepared page:
+// log the chosen driver, dispatch to the seek or play loop, write the
+// trailing newline. Shared by recordJob and recordJobSharded's
+// non-shardable (K<=1) fast path so the dispatch lives in one place.
+async function captureWhole(page, job, opts, captureDir, captureExt, screenshotOpts, driver, logPrefix) {
+  console.log(`${logPrefix}driver: ${driverLogLine(driver, opts)}`);
+  if (driver === 'seek') {
+    await captureSeekRange(page, job, opts, captureDir, captureExt, screenshotOpts, 0, job.totalFrames, opts.quietProgress);
+  } else {
+    await capturePlay(page, job, opts, captureDir, captureExt, screenshotOpts, opts.quietProgress);
+  }
+  if (!opts.quietProgress) process.stdout.write('\n');
+}
+
 // Single-browser recorder: prepare one page, capture the whole job on it.
 // Used by the sequential path and the whole-job parallel pool.
 async function recordJob(browser, job, opts, capturesRoot, logPrefix = '    ') {
@@ -1483,13 +1497,7 @@ async function recordJob(browser, job, opts, capturesRoot, logPrefix = '    ') {
   const screenshotOpts = screenshotOptsFor(opts);
   const { page, driver } = await preparePage(browser, job, opts);
   try {
-    console.log(`${logPrefix}driver: ${driverLogLine(driver, opts)}`);
-    if (driver === 'seek') {
-      await captureSeekRange(page, job, opts, captureDir, captureExt, screenshotOpts, 0, job.totalFrames, opts.quietProgress);
-    } else {
-      await capturePlay(page, job, opts, captureDir, captureExt, screenshotOpts, opts.quietProgress);
-    }
-    if (!opts.quietProgress) process.stdout.write('\n');
+    await captureWhole(page, job, opts, captureDir, captureExt, screenshotOpts, driver, logPrefix);
     return captureDir;
   } finally {
     try { await page.close(); } catch { /* ignore cleanup errors */ }
@@ -1531,8 +1539,17 @@ async function recordJobSharded(job, opts, capturesRoot, puppeteer, maxWorkers, 
   const captureExt = CAPTURE_EXT_FOR_FORMAT[opts.captureFormat];
   const screenshotOpts = screenshotOptsFor(opts);
 
+  // browser0 is owned by this function (unlike recordJob, where the caller
+  // owns the browser). Guard the page setup: if preparePage rejects (load
+  // timeout, fonts.ready hang, CDP error), close browser0 so it doesn't leak.
   const browser0 = await launchBrowser(puppeteer);
-  const { page: page0, driver } = await preparePage(browser0, job, opts);
+  let page0, driver;
+  try {
+    ({ page: page0, driver } = await preparePage(browser0, job, opts));
+  } catch (err) {
+    try { await browser0.close(); } catch { /* ignore */ }
+    throw err;
+  }
 
   // Shard count: bounded by the worker budget AND by keeping each shard big
   // enough to amortize its ~page-load overhead (SEEK_SHARD_MIN_FRAMES). Play
@@ -1543,13 +1560,7 @@ async function recordJobSharded(job, opts, capturesRoot, puppeteer, maxWorkers, 
 
   if (K <= 1) {
     try {
-      console.log(`${logPrefix}driver: ${driverLogLine(driver, opts)}`);
-      if (driver === 'seek') {
-        await captureSeekRange(page0, job, opts, captureDir, captureExt, screenshotOpts, 0, job.totalFrames, opts.quietProgress);
-      } else {
-        await capturePlay(page0, job, opts, captureDir, captureExt, screenshotOpts, opts.quietProgress);
-      }
-      if (!opts.quietProgress) process.stdout.write('\n');
+      await captureWhole(page0, job, opts, captureDir, captureExt, screenshotOpts, driver, logPrefix);
     } finally {
       try { await page0.close(); } catch { /* ignore */ }
       try { await browser0.close(); } catch { /* ignore */ }
