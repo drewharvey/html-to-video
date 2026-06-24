@@ -1588,7 +1588,7 @@ async function recordJobSharded(job, opts, capturesRoot, puppeteer, maxWorkers, 
   // suppressed (K concurrent writers would clobber the \r line).
   const ranges = splitFrameRanges(job.totalFrames, K);
   console.log(
-    `${logPrefix}driver: seek (frame-perfect, no slowdown) — ` +
+    `${logPrefix}driver: ${driverLogLine('seek', opts)} — ` +
     `${job.totalFrames} frames across ${ranges.length} browsers`
   );
 
