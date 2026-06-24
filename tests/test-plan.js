@@ -324,6 +324,50 @@ scenario('invalid --quality-preset value → exit 2', ({ tmp }) => {
 });
 
 // ===========================================================================
+// validatePlan — output/capture-key collision rails and --out misuse.
+// ===========================================================================
+scenario('--out with >1 produced video → exit 2', ({ tmp }) => {
+  fs.writeFileSync(path.join(tmp, 'a.html'), '<html><head><meta name="h2v-duration" content="1s"></head></html>');
+  fs.writeFileSync(path.join(tmp, 'b.html'), '<html><head><meta name="h2v-duration" content="1s"></head></html>');
+  const r = runH2v(['export', tmp, '--out', path.join(tmp, 'out.mp4'), '--dry-run'], { cwd: tmp });
+  assertEq(r.code, 2, 'exit code');
+  assert(/exactly one MP4/.test(r.stderr), `stderr: ${r.stderr}`);
+});
+
+scenario('--out extension mismatching container → exit 2', ({ tmp }) => {
+  const file = path.join(tmp, 'clip.html');
+  fs.writeFileSync(file, '<html><head><meta name="h2v-duration" content="1s"></head></html>');
+  // default container is mp4; .webm out path mismatches.
+  const r = runH2v(['export', file, '--out', path.join(tmp, 'clip.webm'), '--dry-run'], { cwd: tmp });
+  assertEq(r.code, 2, 'exit code');
+});
+
+scenario('duplicate output paths (same basename, different dirs) → exit 1', ({ tmp }) => {
+  fs.mkdirSync(path.join(tmp, 'd1'));
+  fs.mkdirSync(path.join(tmp, 'd2'));
+  fs.writeFileSync(path.join(tmp, 'd1', 'clip.html'), '<html><head><meta name="h2v-duration" content="1s"></head></html>');
+  fs.writeFileSync(path.join(tmp, 'd2', 'clip.html'), '<html><head><meta name="h2v-duration" content="1s"></head></html>');
+  const r = runH2v(['export', path.join(tmp, 'd1', 'clip.html'), path.join(tmp, 'd2', 'clip.html'), '--dry-run'], { cwd: tmp });
+  assertEq(r.code, 1, 'exit code');
+  assert(/same output path/.test(r.stderr), `stderr: ${r.stderr}`);
+});
+
+scenario('captureKey collision (bundle frame vs file) → exit 1', ({ tmp }) => {
+  // Bundle "deck" with frame id "intro" → captureKey "deck__intro", output
+  // output/deck/intro.mp4. File "deck__intro.html" → captureKey "deck__intro",
+  // output output/deck__intro.mp4. Output paths differ, capture keys collide.
+  fs.writeFileSync(path.join(tmp, 'deck.html'),
+    '<!-- ===== ANIMATION_START id="intro" capture_duration="1s" ===== -->\n' +
+    '<!DOCTYPE html><html><head></head><body>intro</body></html>\n' +
+    '<!-- ===== ANIMATION_END ===== -->\n');
+  fs.writeFileSync(path.join(tmp, 'deck__intro.html'),
+    '<html><head><meta name="h2v-duration" content="1s"></head><body>x</body></html>');
+  const r = runH2v(['export', path.join(tmp, 'deck.html'), path.join(tmp, 'deck__intro.html'), '--dry-run'], { cwd: tmp });
+  assertEq(r.code, 1, 'exit code');
+  assert(/capture key/.test(r.stderr), `stderr: ${r.stderr}`);
+});
+
+// ===========================================================================
 // --paste temp-dir cleanup. The paste dir is created early in main(), before
 // the --dry-run early return and the buildPlan/validatePlan process.exit()
 // paths — a finally alone would leak it. A process.on('exit') guard must

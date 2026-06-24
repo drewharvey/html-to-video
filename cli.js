@@ -1152,19 +1152,34 @@ function validatePlan(jobs, opts) {
     );
     process.exit(2);
   }
-  // Detect duplicate output paths (could happen with same basename in different dirs).
-  const seen = new Map();
+  // Detect collisions on two distinct keys:
+  //   - output path: two jobs writing the same final file (e.g. same basename
+  //     in different source dirs).
+  //   - captureKey: names the captures/<key>/ frame dir, which makeCaptureDir
+  //     wipes+recreates. Two jobs sharing one would clobber each other's
+  //     frames mid-run even if their OUTPUT paths differ — e.g. a bundle
+  //     "deck"#"intro" (key "deck__intro") and a file "deck__intro.html"
+  //     (key "deck__intro") land in different outputs but the same capture
+  //     dir. Rare (needs a "__" name coincidence) but silently corrupting.
+  const seenOut = new Map();
+  const seenKey = new Map();
   for (const job of jobs) {
+    const label = `${job.inputPath}${job.bundleId ? ` (${job.bundleId})` : ''}`;
     const out = outputPathFor(job, opts);
-    if (seen.has(out)) {
-      console.error(
-        `error: two animations would write to the same output path: ${out}`
-      );
-      console.error(`  - ${seen.get(out)}`);
-      console.error(`  - ${job.inputPath}${job.bundleId ? ` (${job.bundleId})` : ''}`);
+    if (seenOut.has(out)) {
+      console.error(`error: two animations would write to the same output path: ${out}`);
+      console.error(`  - ${seenOut.get(out)}`);
+      console.error(`  - ${label}`);
       process.exit(1);
     }
-    seen.set(out, `${job.inputPath}${job.bundleId ? ` (${job.bundleId})` : ''}`);
+    seenOut.set(out, label);
+    if (seenKey.has(job.captureKey)) {
+      console.error(`error: two animations share the capture key "${job.captureKey}" and would clobber each other's frames:`);
+      console.error(`  - ${seenKey.get(job.captureKey)}`);
+      console.error(`  - ${label}`);
+      process.exit(1);
+    }
+    seenKey.set(job.captureKey, label);
   }
 }
 
