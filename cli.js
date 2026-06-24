@@ -3033,7 +3033,27 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('\nERROR:', err && err.stack ? err.stack : err);
-  process.exit(1);
-});
+// Run as a CLI only when invoked directly (`node cli.js …` / the `h2v`
+// bin). When require()d by a test, skip main() and expose the pure,
+// logic-dense functions for fast unit testing — this keeps the single-file
+// design intact while giving the tests a seam (no subprocess/browser cost).
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('\nERROR:', err && err.stack ? err.stack : err);
+    process.exit(1);
+  });
+} else {
+  module.exports = {
+    computeRenderPlan,
+    splitFrameRanges,
+    deriveThemes,
+    buildEncodeArgs,
+    buildGifFilterComplex,
+    safeJsonForScript,
+    extractViewport,
+    parseBundleFrames,
+    outputPathFor,
+    driverLogLine,
+    resolveExportOpts,
+  };
+}
