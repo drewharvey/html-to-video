@@ -79,6 +79,9 @@ function runH2v(args, opts = {}) {
   const r = spawnSync('node', [CLI, ...args], {
     cwd: opts.cwd || REPO_ROOT,
     encoding: 'utf-8',
+    // opts.input feeds stdin (a non-TTY pipe) — used to exercise the
+    // --paste flow's piped-HTML path.
+    input: opts.input,
     // E2E exports can be slow; give them up to 3 minutes before timing out
     // (the recorder loop alone can take ~1 min on a heavy fixture). Most
     // calls return in under 5 s.

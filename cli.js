@@ -2873,6 +2873,13 @@ async function main() {
     const written = writePasteToTempFile(html);
     pasteTempDir = written.tempDir;
     paths.push(written.tempPath);
+    // Clean up on ANY exit, not just the normal path. main() has several
+    // early exits before the try/finally below (--dry-run, validatePlan /
+    // buildPlan / no-match process.exit()), so a finally alone would leak
+    // the temp dir on those. Mirror runReview's process.on('exit') guard.
+    process.on('exit', () => {
+      try { fs.rmSync(pasteTempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    });
   }
 
   const cwd = process.cwd();
@@ -3021,11 +3028,8 @@ async function main() {
         console.warn('Could not remove captures dir:', err.message);
       }
     }
-    if (pasteTempDir) {
-      try {
-        fs.rmSync(pasteTempDir, { recursive: true, force: true });
-      } catch { /* ignore */ }
-    }
+    // pasteTempDir is cleaned by the process.on('exit') handler registered
+    // when it was created (fires on early exits too), so no cleanup here.
   }
 }
 

@@ -323,4 +323,25 @@ scenario('invalid --quality-preset value → exit 2', ({ tmp }) => {
   assertEq(r.code, 2, 'exit code');
 });
 
+// ===========================================================================
+// --paste temp-dir cleanup. The paste dir is created early in main(), before
+// the --dry-run early return and the buildPlan/validatePlan process.exit()
+// paths — a finally alone would leak it. A process.on('exit') guard must
+// clean it up on every exit. This pins that fix (regression for the leak).
+// ===========================================================================
+scenario('--paste --dry-run cleans up its temp dir (no leak)', () => {
+  const os = require('os');
+  const tmpdir = os.tmpdir();
+  const pasteDirs = () =>
+    new Set(fs.readdirSync(tmpdir).filter((n) => n.startsWith('h2v-paste-')));
+  const before = pasteDirs();
+  const r = runH2v(['export', '--paste', '--dry-run'], {
+    input: '<!DOCTYPE html><html><head><meta name="h2v-duration" content="1s"></head><body>hi</body></html>',
+  });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  // No h2v-paste-* dir created by this run should survive.
+  const leaked = [...pasteDirs()].filter((n) => !before.has(n));
+  assertEq(leaked, [], 'temp dirs leaked by --paste --dry-run');
+});
+
 summary();
