@@ -161,43 +161,41 @@ After encoding, `./captures/` is wiped on exit (success or failure) — unless `
 
 ## Alpha-channel recording
 
-The `--alpha` flag produces a `.mov` with a real per-pixel alpha channel, suitable for compositing in NLEs. Three things happen together when the flag is set:
+The `--alpha` flag produces a `.mov` with a real per-pixel alpha channel, suitable for compositing in NLEs. Four things happen together when the flag is set:
 
 1. **Capture format forced to PNG.** JPEG has no alpha channel; PNG does.
 2. **`omitBackground: true` passed to `Page.captureScreenshot`.** Chromium normally paints a white viewport before rendering page content; `omitBackground` skips that paint, exposing whatever the page itself paints (or transparency, where the page paints nothing).
-3. **Encoder defaults to `png` codec in `.mov`** (PNG-in-MOV: bit-exact lossless, straight alpha by codec spec). Users can opt into `prores_ks` profile 4 (`yuva444p10le`) via `--codec prores_ks` for Apple-ecosystem pro workflows.
+3. **Encoder defaults to `qtrle` (QuickTime Animation, RLE-lossless) in `.mov`.** Opt into `prores_ks` (ProRes 4444, 10-bit `yuva444p10le`) or `png` (PNG-in-MOV) via `--codec`.
+4. **Alpha is pre-multiplied** (`-vf premultiply=inplace=1`) and **fps steps to 30** unless `--fps` is passed. Opt out of premultiplication with `--alpha-mode straight`.
 
-These three are coupled — `--alpha` rejects explicit `--codec`/`--container`/`--capture-format` flags that would break any of them.
+These are coupled — `--alpha` rejects explicit `--codec`/`--container`/`--capture-format` flags that would break any of them, and `--alpha-mode` without `--alpha` is an error.
 
-### Why PNG-in-MOV is the default
+### Why qtrle + pre-multiplied is the default
 
-Chrome's `Page.captureScreenshot` produces **straight alpha** (RGB stored at full strength, alpha separate — verified by sampling glow pixels at known anti-aliased edges). For an NLE to render this correctly, it needs to know the alpha mode of the file it's loading.
+The default has changed twice; the reasoning is empirical, anchored on CapCut (the strictest decoder we test) plus QuickTime/FCP/Resolve/Premiere/After Effects.
 
-The PNG codec spec mandates straight alpha at the codec level. There's no metadata flag to set or guess at — every decoder, in every player, interprets PNG alpha the same way. That structural property is what makes PNG-in-MOV reliable.
+**Codec.** `prores_ks` was the original default — demoted because ffmpeg's prores muxer omits the alpha-mode tag, so CapCut guessed pre-multiplied and blew out glows. `png` (PNG-in-MOV) came next: bit-exact and ~6× smaller, but CapCut's PNG decoder drops alpha at 4K + long durations (>~5 s), rendering backgrounds solid white. `qtrle` is the current default — lossless RLE, file size comparable to PNG-in-MOV, and it passes the full-scale 4K / 17 s CapCut test plus every other NLE we check. `png` remains a `--codec png` opt-in for non-CapCut workflows; `prores_ks` for Apple colour-managed pipelines that want 10-bit chroma.
 
-ProRes 4444 is the opposite: alpha mode lives in a MOV extension (`kCMFormatDescriptionExtension_AlphaChannelMode`) that ffmpeg's `prores_ks` muxer doesn't write. Without the tag, players guess — QuickTime/FCP guess straight (correct for our content), CapCut and several web editors guess premultiplied (wrong). When a player premultiplies a file that's already straight, a semi-transparent pink glow at α=13 with R=255 gets rendered as "5% mix of full-strength pink" rather than "5% mix of darkened pink" — bright halo instead of soft falloff. Verified empirically against CapCut.
-
-PNG-in-MOV also happens to be **~6× smaller** for h2v's content (synthetic vector-style animations with large flat regions and transparent surrounds). PNG's per-frame zlib + filter compression is exceptionally well-suited to this; ProRes 4444's near-CBR is engineered for high-entropy live-action mastering, so it allocates bitrate even where there's almost nothing to encode.
+**Alpha mode.** Pre-multiplied, not straight — also empirical: testing alpha variants in CapCut showed pre-multiplied rendered correctly while straight blew out semi-transparent regions (CapCut and many compositing tools assume pre-multiplied intermediates). Users who specifically need straight alpha pass `--alpha-mode straight`.
 
 ### Codec matrix for alpha output
 
 | Codec | Container | Verdict |
 |---|---|---|
-| **`png` (default)** | `.mov` | **Bit-exact lossless. Straight alpha per codec spec. Universal NLE compatibility. ~6× smaller than ProRes 4444 for h2v's content.** |
-| `prores_ks` (opt-in) | `.mov` | 10-bit chroma, larger files, ambiguous alpha-mode metadata. Use only if the pipeline specifically expects ProRes 4444. |
+| **`qtrle` (default)** | `.mov` | **Lossless RLE, native Apple codec. Pre-multiplied (`pix_fmt argb`). The only lossless alpha codec we've tested that passes CapCut at full 4K + long duration, plus Premiere/Resolve/FCP/AE. Size comparable to PNG-in-MOV.** |
+| `png` (opt-in) | `.mov` | Bit-exact lossless, typically the smallest. Verified-unreliable in CapCut at 4K + long durations (alpha dropped → white backgrounds); fine for QuickTime/IINA/FCP/web. |
+| `prores_ks` (opt-in) | `.mov` | ProRes 4444, 10-bit 4:4:4, ~5–10× larger. For Apple colour-managed pipelines that specifically expect it. |
 | libx264 | mp4/mov | No alpha encoder. |
 | libx265 | mp4/mov | Spec supports alpha; libx265 doesn't expose it portably. |
 | libvpx-vp9 | webm | Encoder advertises `yuva420p` but ffmpeg's wrapper silently drops the alpha plane in the simple invocation. Achievable via multi-stream remux but fragile across ffmpeg versions; deferred. |
-| hevc_videotoolbox | mov | macOS-only encoder; non-portable. Visually lossless but lossy; alpha is premultiplied per Apple's spec. Could be added with `-vf premultiply=inplace=1` pre-encode for correct rendering. |
-| qtrle | mov | Lossless, alpha, similar size to PNG-in-MOV. Same straight-alpha advantage. Skipped — PNG-in-MOV is the cleaner default. |
 
 ### Authoring caveat
 
 `omitBackground` only exposes the page's own paint. If the page sets an opaque `body { background: ... }`, the recording is opaque. The authoring rule (`html, body { background: transparent }` or no `background` at all) is documented in [`authoring.md`](authoring.md). h2v doesn't inject a stylesheet to enforce this — pages with intentional backgrounds for non-alpha runs would be surprised by it.
 
-### Fixing ProRes 4444 alpha rendering (future work)
+### A note on ProRes 4444 alpha metadata
 
-The CapCut "glow blow-out" bug for ProRes 4444 is fixable with a one-line ffmpeg filter: `-vf premultiply=inplace=1` before the encoder pre-multiplies the RGB so any player guessing premultiplied gets correct math. The catch: it breaks playback in players that guess straight (QuickTime/FCP). The correct fix is to write the `kCMFormatDescriptionExtension_AlphaChannelMode = "Straight"` tag into the MOV, but ffmpeg's mov muxer doesn't expose that as a CLI knob. Until that's available, PNG-in-MOV remains the universally-correct default.
+ffmpeg's `prores_ks` muxer doesn't write the `kCMFormatDescriptionExtension_AlphaChannelMode` MOV tag, so players must guess the alpha mode. h2v sidesteps this by **pre-multiplying alpha before encoding** (`-vf premultiply=inplace=1` — the default for every `--alpha` codec, not just ProRes), which is what CapCut and most editors assume, so the old straight-alpha "glow blow-out" doesn't occur. `--alpha-mode straight` opts out, but without the metadata tag a straight file may still be misinterpreted by some players — which is why `prores_ks` is opt-in and `qtrle` (same pre-multiplied advantage, broader decoder support) is the default.
 
 ---
 

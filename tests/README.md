@@ -4,11 +4,19 @@ Two-layer test suite plus standalone benchmarks. The fixtures (HTML files) doubl
 
 | Layer | Run | When | Wall time | Notes |
 |---|---|---|---|---|
-| **Fast** | `npm test` | Every push + PR via `.github/workflows/tests.yml` | ~10s | No Chromium / ffmpeg. CLI-surface tests only (`--dry-run` for export, `--no-open` for review, file I/O for bundle). |
+| **Fast** | `npm test` | Every push + PR via `.github/workflows/tests.yml` | ~10s | No Chromium / ffmpeg. In-process unit tests of the pure functions + CLI-surface tests (`--dry-run` for export, `--no-open` for review, file I/O for bundle, parser/validation error paths). |
 | **E2E** | `npm run test:e2e` | Every push + PR via `.github/workflows/tests-e2e.yml` | ~2 min | Real exports. Needs Puppeteer's Chrome + ffmpeg/ffprobe. |
 | Benchmarks | `node tests/bench-*.js` | On demand only | Varies | Perf characterization, not pass/fail. |
 
 ## Fast-layer tests
+
+### test-unit.js (`npm run test:unit`)
+
+In-process unit tests of the pure, logic-dense functions, imported directly via `cli.js`'s `require.main !== module` export seam (no subprocess, no Chromium). 12 scenarios covering `splitFrameRanges` (contiguous/complete partitioning), `computeRenderPlan`'s three resolution modes (default 4K-fit, `--scale` density, `--output-height`), `needsDownscale`/`downscaleFilter`, `deriveThemes` precedence/validation, and the `safeJsonForScript` `</script>` escape.
+
+### test-args.js (`npm run test:args`)
+
+Argument-parser and input-discovery error paths. 12 scenarios asserting exit codes + messages for the usage errors (unknown command/flag, missing flag value, bad `--duration`/`--fps`/`--crf`/`--capture-format`/`--alpha-mode`) and discovery errors (path not found, non-HTML file). These guard the parsing boilerplate that new flags get pattern-matched into.
 
 ### test-bundle.js (`npm run test:bundle`)
 
@@ -16,20 +24,28 @@ Correctness tests for `h2v bundle` — assembling standalone HTML files into a s
 
 ### test-plan.js (`npm run test:plan`)
 
-Pre-browser pipeline tests via `h2v export --dry-run`. ~25 scenarios covering:
+Pre-browser pipeline tests via `h2v export --dry-run`. 36 scenarios covering:
 - **Metadata extraction** — `<meta name="h2v-*">` tags reach the plan
 - **Bundle decomposition** — every `ANIMATION_START` becomes a plan row
 - **Skip rules** — dotfiles + `review.html` excluded from directory mode
 - **Flag overrides** — `--duration`, `--width`+`--height` (coupled pair), `--theme`, `--fps`
 - **Quality preset matrix** — max / high / standard / draft
 - **Alpha coupling** — `--alpha` forces `.mov`, fps 30, allowed codec set `{qtrle, png, prores_ks}`
+- **Resolution modes** — default 4K-fit, `--scale`, `--output-height` (exact/non-divisor/odd/mutex)
+- **validatePlan rails** — `--out` with >1 video, `--out` extension mismatch, duplicate output paths, capture-key collisions
+- **`--paste`** — path derivation (single → `output/paste.<ext>`, bundle → `output/paste/<id>.<ext>`), positional-arg conflict, temp-dir cleanup on early exit
+- **Capture-quality mutex** — `--capture-quality` rejected with PNG capture, with the `*Explicit`-gating canary
 - **Error paths** — incompatible flag combos exit 2 with specific messages
 
 ### test-review.js (`npm run test:review`)
 
-Tests `h2v review --no-open` HTML generation. 7 scenarios:
-- Animation count + IDs per input
+Tests `h2v review --no-open` HTML generation. 13 scenarios:
+- Animation count + IDs per input (single file, bundle, directory with skip rules)
+- Live mode (`src=file://`) vs portable `--out` mode (inlined `srcdoc`)
 - Per-file viewport meta reflected in iframe sizing
+- Scale-to-fit stage (natural-size iframe + `transform: scale` + ResizeObserver — no clipping at any aspect, vertical included)
+- Per-card view controls (Full screen via the Fullscreen API; Actual-size opens native 1:1 in a scrollable new-tab wrapper) and the inlined Lucide SVG icons
+- Header de-duplication (the source span is omitted when it would just repeat the title)
 - `</script>` escape canary (a fixture containing literal `</script>` must not break the outer page)
 
 ## E2E tests (real exports)
@@ -38,7 +54,7 @@ These exercise the full pipeline — Puppeteer → screenshots → ffmpeg → ou
 
 ### test-export-flags.js (`npm run test:export-flags`)
 
-Per-flag e2e validation. 16 scenarios, one per user-facing flag (or coupled set):
+Per-flag e2e validation. 28 scenarios, one per user-facing flag (or coupled set):
 - **Timing / dimensions** — `--duration`, `--fps`, `--width`+`--height`+`--scale`
 - **Codec / container** — `--codec libx265`, `--container mov` paired with `--codec libx264`
 - **Quality preset** — `max` (ProRes 4:4:4 path), `draft` (h264)
@@ -51,7 +67,7 @@ For each flag the assertion is "the flag took effect on the output" — ffprobe 
 
 ### test-sync.js (`npm run test:sync`)
 
-The canonical sync invariant. Exports `tests/sync-test.html` at the default `--slowdown 6` and verifies all **six animation time sources** fill in lockstep:
+The canonical sync invariant. Exports `tests/sync-test.html` and verifies all **six animation time sources** fill in lockstep:
 
 1. CSS transition (Animation domain)
 2. CSS @keyframes (Animation domain)
@@ -60,7 +76,15 @@ The canonical sync invariant. Exports `tests/sync-test.html` at the default `--s
 5. setInterval + Date.now()
 6. requestAnimationFrame + timestamp arg
 
-At video t=0.5s each bar must be at ~50% width; at t=1.0s each must be fully filled. The test samples pixels at 25%, 50%, 75% of each track and asserts presence/absence of bar color. Catches shim wrapping bugs (e.g. the historical rAF double-slow), `Animation.setPlaybackRate` disconnect, and capture-loop drift.
+It measures each bar's fill fraction at the t=0.5s frame and asserts they're all within a tight **lockstep spread** of each other (the real "in step" invariant), plus a loose absolute window and a fully-filled check at t=1.0s. The relative check is robust to uniform capture drift on a loaded CI runner while still catching the structural shim bugs (e.g. the historical rAF double-slow, `Animation.setPlaybackRate` disconnect), which throw one source off by ≥0.4. The test exports at `--slowdown 12` (not the production default of 6): shim correctness is a scale-invariant ratio, and the higher slowdown gives each source more wall-time per captured frame, removing CI flakiness from `setInterval` starvation.
+
+### test-seek.js (`npm run test:seek`)
+
+End-to-end validation of the seek (scrub) driver and frame-sharding. 5 scenarios:
+- **Auto-detection** — a page exposing `window.seek` is recorded by scrubbing (`driver: seek` in stdout), and the captured frames are correct (the linear bar reads exactly 50% at the midpoint, 100% at the end — a mis-detection would freeze frame 0 and fail loudly).
+- **Sharding correctness** — `--concurrency 2` on a 120-frame seek job fans out across 2 browsers and produces content matching the single-worker output (tolerant pixel diff, not byte-identity — cross-process AA differs sub-pixel).
+- **Warm-up replay canary** — `seek-stateful-test.html` is deliberately order-dependent; sharded output must still match single-worker, proving each shard replays the seek prefix before capturing.
+- **No-shard invariants** — a play (non-seek) job with `--concurrency 2` collapses to one browser, and a seek job below `SEEK_SHARD_MIN_FRAMES` (60) stays K=1.
 
 ### test-alpha-e2e.js (`npm run test:alpha-e2e`)
 

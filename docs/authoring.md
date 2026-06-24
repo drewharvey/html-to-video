@@ -371,7 +371,7 @@ When the operator passes `h2v export --alpha`, h2v records a video with a real a
 
 ```bash
 h2v export my-clip.html --alpha
-# → output/my-clip.mov  (PNG-in-MOV, lossless, transparent, ready to composite)
+# → output/my-clip.mov  (qtrle, lossless, transparent, ready to composite)
 ```
 
 Drop the `.mov` onto a timeline. Alpha is auto-detected. Done.

@@ -29,8 +29,8 @@ h2v export animation.html                 # one file
 h2v export bundle.html                    # bundles auto-detected
 h2v export ./anims --concurrency 8        # parallel batch
 h2v export --quality-preset high          # higher-fidelity tier
-h2v export --alpha                        # transparent .mov (PNG-in-MOV,
-                                          # lossless, drops onto any NLE)
+h2v export --alpha                        # transparent .mov (qtrle, lossless,
+                                          # drops onto any NLE incl. CapCut)
 h2v export --alpha --codec prores_ks      # opt into ProRes 4444 instead
 h2v export --gif                          # animated GIF (480p/20fps, looping)
 h2v export --theme all                    # one video per declared theme
@@ -106,7 +106,12 @@ npm link
 
 ### Tests
 
-[`tests/sync-test.html`](tests/sync-test.html) is a 1.5-second fixture for verifying that CSS- and JS-driven animations stay in lockstep during recording. There is no `npm test` script — the project's testing is fixture-based.
+Two-layer suite (see [`tests/README.md`](tests/README.md) for the full rundown):
+
+- **Fast** — `npm test`: no Chromium/ffmpeg (unit tests of the pure functions, argument/validation error paths, bundle assembly, `export --dry-run` plans, `review` HTML generation). Runs on every push + PR via `.github/workflows/tests.yml`.
+- **E2E** — `npm run test:e2e`: real exports (Puppeteer + ffmpeg), asserting on the produced files — per-flag behavior, the six-source timing-sync invariant, the seek/sharding drivers, and alpha. Runs via `.github/workflows/tests-e2e.yml`.
+
+[`tests/sync-test.html`](tests/sync-test.html) is the canonical fixture for verifying that CSS- and JS-driven animations stay in lockstep during recording (consumed by `npm run test:sync` and handy for manual inspection).
 
 ### Required reading
 
