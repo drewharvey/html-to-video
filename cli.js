@@ -1745,6 +1745,23 @@ function buildEncodeArgs(opts) {
 // mostly-static UI animations). The leading scale (when downscaling — see
 // computeRenderPlan) lives INSIDE the filtergraph because palettegen needs
 // the final resolution.
+// Whether ffmpegStitch must Lanczos-downscale the captured frames to the
+// per-job target height. True only in target mode (job.outputHeight set —
+// i.e. NOT --scale density mode, where it's null) AND when the integer
+// render height overshoots the target (exact integer fit needs no resample).
+// Single source of truth: used by the GIF path, the video path, and the run
+// summary, so the downscale rule can't silently desync between them.
+function needsDownscale(job) {
+  return !!job && job.outputHeight != null
+    && job.height * job.renderScale !== job.outputHeight;
+}
+
+// The ffmpeg scale filter for the downscale: width auto (-2 = preserve
+// aspect, force even), Lanczos. Only meaningful when needsDownscale(job).
+function downscaleFilter(job) {
+  return `scale=-2:${job.outputHeight}:flags=lanczos`;
+}
+
 function buildGifFilterComplex(opts, job) {
   const tier = opts.qualityPreset;
   const perFrame = tier === 'max';
@@ -1757,9 +1774,8 @@ function buildGifFilterComplex(opts, job) {
   const paletteuse = `paletteuse=${dither}:diff_mode=rectangle${perFrame ? ':new=1' : ''}`;
 
   const pre = [];
-  if (job && job.outputHeight != null
-      && job.height * job.renderScale !== job.outputHeight) {
-    pre.push(`scale=-2:${job.outputHeight}:flags=lanczos`);
+  if (needsDownscale(job)) {
+    pre.push(downscaleFilter(job));
   }
   const preStr = pre.length ? pre.join(',') + ',' : '';
   return `${preStr}split[a][b];[a]${palettegen}[p];[b][p]${paletteuse}`;
@@ -1817,9 +1833,8 @@ function ffmpegStitch(captureDir, outPath, opts, job) {
     // preserve aspect, force even). Skipped when the captured height already
     // equals the target (exact integer fit → no resample). job.outputHeight
     // is null in --scale density mode (no downscale ever).
-    if (job && job.outputHeight != null
-        && job.height * job.renderScale !== job.outputHeight) {
-      vf.push(`scale=-2:${job.outputHeight}:flags=lanczos`);
+    if (needsDownscale(job)) {
+      vf.push(downscaleFilter(job));
     }
     const vfArgs = vf.length ? ['-vf', vf.join(',')] : [];
 
@@ -2990,7 +3005,7 @@ async function main() {
       sizeDesc = `varied render sizes → ${targetLabel}`;
     } else {
       const renderDesc = `${j0.width * j0.renderScale}×${j0.height * j0.renderScale} (${j0.width}×${j0.height} × ${j0.renderScale})`;
-      const exact = j0.height * j0.renderScale === j0.outputHeight;
+      const exact = !needsDownscale(j0);
       if (exact) {
         sizeDesc = renderDesc;
       } else {
@@ -3045,6 +3060,8 @@ if (require.main === module) {
 } else {
   module.exports = {
     computeRenderPlan,
+    needsDownscale,
+    downscaleFilter,
     splitFrameRanges,
     deriveThemes,
     buildEncodeArgs,

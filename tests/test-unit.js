@@ -83,6 +83,26 @@ scenario('computeRenderPlan: --output-height renders up to nearest integer then 
 });
 
 // ===========================================================================
+// needsDownscale / downscaleFilter — the single source of truth for the
+// Lanczos-downscale step shared by the GIF path, video path, and run summary.
+// ===========================================================================
+scenario('needsDownscale: only in target mode with a non-exact fit', () => {
+  // Density mode (--scale): outputHeight null → never downscale.
+  assert(!h2v.needsDownscale({ height: 360, renderScale: 2, outputHeight: null }), 'density mode');
+  // Exact integer fit (720×3 === 2160) → no resample.
+  assert(!h2v.needsDownscale({ height: 720, renderScale: 3, outputHeight: 2160 }), 'exact fit');
+  // Overshoot (900×3 = 2700 → 2160) → downscale.
+  assert(h2v.needsDownscale({ height: 900, renderScale: 3, outputHeight: 2160 }), 'overshoot');
+  // No job (e.g. summary with nothing) → false.
+  assert(!h2v.needsDownscale(null), 'null job');
+  assert(!h2v.needsDownscale(undefined), 'undefined job');
+});
+
+scenario('downscaleFilter: Lanczos scale to target height, width auto-even', () => {
+  assertEq(h2v.downscaleFilter({ outputHeight: 2160 }), 'scale=-2:2160:flags=lanczos', 'filter string');
+});
+
+// ===========================================================================
 // deriveThemes — theme selection precedence and validation.
 // ===========================================================================
 scenario('deriveThemes: no flag → default only', () => {
