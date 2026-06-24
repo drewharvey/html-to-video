@@ -885,9 +885,9 @@ function detectMode(htmlText) {
 
 function parseAttributes(attrString) {
   const out = {};
-  let m;
-  ATTR_RE.lastIndex = 0;
-  while ((m = ATTR_RE.exec(attrString)) !== null) {
+  // matchAll clones the regex internally, so the shared global ATTR_RE's
+  // lastIndex is never mutated — no manual reset, no cross-call state bleed.
+  for (const m of attrString.matchAll(ATTR_RE)) {
     out[m[1]] = m[2];
   }
   return out;
@@ -895,9 +895,9 @@ function parseAttributes(attrString) {
 
 function parseBundleFrames(htmlText, sourcePath) {
   const frames = [];
-  let m;
-  ANIMATION_BLOCK_RE.lastIndex = 0;
-  while ((m = ANIMATION_BLOCK_RE.exec(htmlText)) !== null) {
+  // matchAll clones the regex (see parseAttributes) — ANIMATION_BLOCK_RE's
+  // lastIndex stays put, so no reset is needed before iterating.
+  for (const m of htmlText.matchAll(ANIMATION_BLOCK_RE)) {
     const attrs = parseAttributes(m[1]);
     if (!attrs.id) {
       throw new Error(`${sourcePath}: ANIMATION_START without id attribute`);
