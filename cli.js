@@ -29,8 +29,10 @@ const DEFAULTS = {
   // CRF 18 step dominates the perceptual quality of the final MP4.
   captureFormat: 'jpeg',
   captureQuality: 95,
-  // Default codec is libx264 → mp4 — the most compatible combination.
-  // Other codecs and containers are opt-in.
+  // Pre-preset seed only. The effective default codec comes from the
+  // standard quality preset (libx265, 10-bit) which resolveExportOpts applies
+  // whenever --codec wasn't passed; every preset sets a codec, so this seed is
+  // never the final value. Kept as libx264 as a conservative bare fallback.
   codec: 'libx264',
 };
 
@@ -112,13 +114,23 @@ const QUALITY_PRESETS = {
   high: {
     captureFormat: 'jpeg',
     captureQuality: 100,
-    codec: 'libx264',
+    // libx265 → 10-bit 4:4:4 (yuv444p10le, see buildEncodeArgs). Keeps high's
+    // "quality over compatibility" identity (full chroma) while gaining 10-bit
+    // — cleaner on gradients and ~half the size of the old 8-bit 4:4:4 h264.
+    // Main 4:4:4 10 is also strictly more compatible than h264 High 4:4:4,
+    // which Safari/QuickTime reject outright.
+    codec: 'libx265',
     crf: 12,
   },
   standard: {
     captureFormat: 'jpeg',
     captureQuality: 95,
-    codec: 'libx264',
+    // libx265 (10-bit, see buildEncodeArgs) is the default codec: it clears
+    // the localized macroblock ("hammered") artifacts and gradient banding
+    // that 8-bit h264 produces on smooth/animated content, at no size cost
+    // (typically smaller). Output stays .mp4 (libx265's default container) and
+    // carries the -tag:v hvc1 tag for QuickTime/Safari.
+    codec: 'libx265',
     crf: 18,
   },
   draft: {
@@ -157,7 +169,7 @@ const HELP_TEXT = `h2v v${VERSION} — convert HTML animations to video files
 
 USAGE
   h2v export [<paths...>] [flags]   Render animations to video. Defaults to
-                                    4K 60fps MP4 (h264); every output
+                                    4K 60fps MP4 (10-bit HEVC); every output
                                     parameter is configurable.
   h2v review [<paths...>] [flags]   Build a single HTML page that previews
                                     every animation at the given paths.
@@ -214,15 +226,17 @@ EXPORT FLAGS
                         max       PNG capture + ProRes 4444 (12-bit 4:4:4)
                                   in .mov. Archival ceiling. Files are
                                   large; encode is slower.
-                        high      JPEG q=100 + h264 yuv444p crf 12
-                                  -preset veryslow -tune animation. Great
-                                  fidelity; 4:4:4 trades hardware-decoder
+                        high      JPEG q=100 + HEVC 10-bit yuv444p10le
+                                  crf 12 -preset veryslow -tune animation.
+                                  Great fidelity; 4:4:4 trades some
                                   compatibility for chroma accuracy.
-                        standard  JPEG q=95 + h264 yuv420p crf 18
-                                  -preset medium -tune animation. The
-                                  default; visually lossless, plays
-                                  everywhere. (= h2v's no-flag behavior.)
-                        draft     JPEG q=80 + h264 yuv420p crf 28
+                        standard  JPEG q=95 + HEVC 10-bit yuv420p10le crf
+                                  18 -preset medium -tune animation. The
+                                  default; 10-bit avoids the macroblock /
+                                  gradient-banding artifacts 8-bit causes
+                                  on smooth content. (= h2v's no-flag
+                                  behavior.)
+                        draft     JPEG q=80 + h264 8-bit yuv420p crf 28
                                   -preset ultrafast. Fast iteration; tiny
                                   files; obvious compression artifacts.
                       Individual flags below override their preset values.
@@ -231,14 +245,19 @@ EXPORT FLAGS
                       prores_ks (uses a fixed profile instead). Default
                       depends on --quality-preset.
   --codec <name>      Video encoder. One of: libx264, libx265,
-                      libvpx-vp9, prores_ks, qtrle, png. h264 is the
-                      universal default; h265 gives ~30% smaller files;
-                      vp9 targets web delivery; prores_ks produces
-                      editing-friendly masters; qtrle is lossless
-                      QuickTime Animation (the --alpha default); png is
-                      lossless PNG-in-MOV (alpha-capable but unreliable
-                      in CapCut at 4K — see --alpha). Default depends on
-                      --quality-preset and --alpha.
+                      libvpx-vp9, prores_ks, qtrle, png. h265 (10-bit) is
+                      the default — it avoids the macroblock / banding
+                      artifacts 8-bit h264 causes on smooth content, at no
+                      size cost; libx264 is 8-bit and maximally compatible
+                      (web/older devices); vp9 targets web delivery;
+                      prores_ks produces editing-friendly masters; qtrle
+                      is lossless QuickTime Animation (the --alpha
+                      default); png is lossless PNG-in-MOV (alpha-capable
+                      but unreliable in CapCut at 4K — see --alpha).
+                      h265/h264 encode 10-bit/8-bit respectively; explicit
+                      libx264 stays 8-bit (10-bit h264 has no hardware
+                      decode). Default depends on --quality-preset and
+                      --alpha.
   --container <ext>   Output container: mp4, mov, or webm. Auto-derived
                       from --codec when omitted (h264/h265 → mp4, vp9 →
                       webm, prores → mov). Set explicitly to override
@@ -1639,6 +1658,43 @@ function ensureFfmpeg() {
   }
 }
 
+// The default codec is libx265 emitting 10-bit (it's what clears the
+// macroblock/banding artifacts 8-bit produces). Minimal/LGPL ffmpeg builds can
+// ship without libx265, and a rare legacy libx265 may be 8-bit-only — so probe
+// for both the encoder and a 10-bit pixel format before relying on them.
+function libx265TenBitAvailable() {
+  const enc = spawnSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8' });
+  if (enc.error || enc.status !== 0 || !/\blibx265\b/.test(enc.stdout || '')) return false;
+  const h = spawnSync('ffmpeg', ['-hide_banner', '-h', 'encoder=libx265'], { encoding: 'utf8' });
+  if (h.error || h.status !== 0) return false;
+  return /yuv420p10le/.test(h.stdout || '');
+}
+
+// Keep the export working when the resolved codec is libx265 but this ffmpeg
+// can't do 10-bit HEVC. An explicit `--codec libx265` errors (respect the
+// user's stated intent); a preset-derived libx265 (including the default)
+// falls back to 8-bit h264 with a clear warning that the artifact fix is lost.
+function ensureCodecOrFallback(opts) {
+  if (opts.codec !== 'libx265') return;
+  if (libx265TenBitAvailable()) return;
+  if (opts.codecExplicit) {
+    console.error(
+      'error: --codec libx265 requested, but this ffmpeg build lacks libx265 with ' +
+      '10-bit support. Install an ffmpeg built with libx265 (e.g. `brew install ffmpeg`), ' +
+      'or use --codec libx264.'
+    );
+    process.exit(1);
+  }
+  console.warn(
+    'warning: this ffmpeg build lacks 10-bit libx265 — falling back to 8-bit h264. ' +
+    'Output may show compression artifacts (macroblocking / gradient banding) on smooth ' +
+    'or animated content. Install an ffmpeg with libx265 for the default 10-bit HEVC encode.'
+  );
+  // container was already validated for libx265 (mp4/mov), both of which libx264
+  // also allows, so no re-validation is needed; buildEncodeArgs will emit 8-bit.
+  opts.codec = 'libx264';
+}
+
 // Per-codec encode args. The quality preset (opts.qualityPreset) influences
 // codec-specific encoder choices: pix_fmt subsampling, x264/x265 -preset
 // (effort level), -tune, and the ProRes profile. Higher tiers reach for
@@ -1654,7 +1710,17 @@ function buildEncodeArgs(opts) {
       // content (HTML animations, often saturated colors, sharp edges)
       // at the cost of compatibility with some hardware h264 decoders
       // and Safari.
-      const pixFmt = (tier === 'high' || tier === 'max') ? 'yuv444p' : 'yuv420p';
+      const chroma = (tier === 'high' || tier === 'max') ? 'yuv444p' : 'yuv420p';
+      // HEVC encodes 10-bit by default — extra bit depth is what clears the
+      // localized macroblock ("hammered") artifacts and gradient banding that
+      // 8-bit produces on smooth/animated content, at no size cost (often
+      // smaller). h264 deliberately stays 8-bit: 10-bit h264 is the High 10
+      // profile, which has no hardware decode and is rejected by
+      // QuickTime/Safari, so an explicit `--codec libx264` must not silently
+      // produce it. Bit depth is therefore keyed off the codec, not the tier.
+      const pixFmt = opts.codec === 'libx265' ? chroma + '10le' : chroma;
+      // -profile:v high444 is an h264 profile name; only emit it for the 8-bit
+      // 4:4:4 h264 path (libx265 derives its profile from the pix_fmt itself).
       const profileArgs = pixFmt === 'yuv444p' ? ['-profile:v', 'high444'] : [];
       const encoderPreset =
         tier === 'high' || tier === 'max' ? 'veryslow' :
@@ -2978,7 +3044,10 @@ async function main() {
 
   if (opts.dryRun) return;
 
-  if (!opts.skipFfmpeg) ensureFfmpeg();
+  if (!opts.skipFfmpeg) {
+    ensureFfmpeg();
+    ensureCodecOrFallback(opts);
+  }
 
   let puppeteer;
   try {

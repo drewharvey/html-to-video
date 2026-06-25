@@ -1,6 +1,6 @@
 # html-to-video
 
-Convert HTML animations to video files. Drop a file in a folder, run `h2v export`, get a video. Defaults to 4K 60fps MP4 (h264); every output parameter is configurable.
+Convert HTML animations to video files. Drop a file in a folder, run `h2v export`, get a video. Defaults to 4K 60fps MP4 (10-bit HEVC); every output parameter is configurable.
 
 The companion `h2v review` command builds a single self-contained HTML page that embeds every animation at the given paths, for side-by-side preview in a browser.
 

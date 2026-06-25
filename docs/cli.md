@@ -18,7 +18,7 @@ h2v v0.1.0 — convert HTML animations to video files
 
 USAGE
   h2v export [<paths...>] [flags]   Render animations to video. Defaults to
-                                    4K 60fps MP4 (h264); every output
+                                    4K 60fps MP4 (10-bit HEVC); every output
                                     parameter is configurable.
   h2v review [<paths...>] [flags]   Build a single HTML page that previews
                                     every animation at the given paths.
@@ -75,15 +75,17 @@ EXPORT FLAGS
                         max       PNG capture + ProRes 4444 (12-bit 4:4:4)
                                   in .mov. Archival ceiling. Files are
                                   large; encode is slower.
-                        high      JPEG q=100 + h264 yuv444p crf 12
-                                  -preset veryslow -tune animation. Great
-                                  fidelity; 4:4:4 trades hardware-decoder
+                        high      JPEG q=100 + HEVC 10-bit yuv444p10le
+                                  crf 12 -preset veryslow -tune animation.
+                                  Great fidelity; 4:4:4 trades some
                                   compatibility for chroma accuracy.
-                        standard  JPEG q=95 + h264 yuv420p crf 18
-                                  -preset medium -tune animation. The
-                                  default; visually lossless, plays
-                                  everywhere. (= h2v's no-flag behavior.)
-                        draft     JPEG q=80 + h264 yuv420p crf 28
+                        standard  JPEG q=95 + HEVC 10-bit yuv420p10le crf
+                                  18 -preset medium -tune animation. The
+                                  default; 10-bit avoids the macroblock /
+                                  gradient-banding artifacts 8-bit causes
+                                  on smooth content. (= h2v's no-flag
+                                  behavior.)
+                        draft     JPEG q=80 + h264 8-bit yuv420p crf 28
                                   -preset ultrafast. Fast iteration; tiny
                                   files; obvious compression artifacts.
                       Individual flags below override their preset values.
@@ -92,14 +94,19 @@ EXPORT FLAGS
                       prores_ks (uses a fixed profile instead). Default
                       depends on --quality-preset.
   --codec <name>      Video encoder. One of: libx264, libx265,
-                      libvpx-vp9, prores_ks, qtrle, png. h264 is the
-                      universal default; h265 gives ~30% smaller files;
-                      vp9 targets web delivery; prores_ks produces
-                      editing-friendly masters; qtrle is lossless
-                      QuickTime Animation (the --alpha default); png is
-                      lossless PNG-in-MOV (alpha-capable but unreliable
-                      in CapCut at 4K — see --alpha). Default depends on
-                      --quality-preset and --alpha.
+                      libvpx-vp9, prores_ks, qtrle, png. h265 (10-bit) is
+                      the default — it avoids the macroblock / banding
+                      artifacts 8-bit h264 causes on smooth content, at no
+                      size cost; libx264 is 8-bit and maximally compatible
+                      (web/older devices); vp9 targets web delivery;
+                      prores_ks produces editing-friendly masters; qtrle
+                      is lossless QuickTime Animation (the --alpha
+                      default); png is lossless PNG-in-MOV (alpha-capable
+                      but unreliable in CapCut at 4K — see --alpha).
+                      h265/h264 encode 10-bit/8-bit respectively; explicit
+                      libx264 stays 8-bit (10-bit h264 has no hardware
+                      decode). Default depends on --quality-preset and
+                      --alpha.
   --container <ext>   Output container: mp4, mov, or webm. Auto-derived
                       from --codec when omitted (h264/h265 → mp4, vp9 →
                       webm, prores → mov). Set explicitly to override
@@ -272,15 +279,15 @@ ENVIRONMENT
 | Preset | Frame capture | Video encode | Use case |
 |---|---|---|---|
 | `max` | PNG (lossless) | ProRes 4444 (profile 4, 12-bit 4:4:4, `-vendor apl0`) in `.mov` | Archival ceiling, NLE handoff. Files are ~10× larger than ProRes HQ; encode is slower. |
-| `high` | JPEG q=100 | h264 `yuv444p -profile:v high444 -crf 12 -preset veryslow -tune animation` in `.mp4` | Distribution-grade visual lossless. Trades hardware-decoder/Safari compatibility for full chroma. |
-| `standard` (default) | JPEG q=95 | h264 `yuv420p -crf 18 -preset medium -tune animation -movflags +faststart` in `.mp4` | The default. Visually lossless, plays everywhere, web-streamable. |
-| `draft` | JPEG q=80 | h264 `yuv420p -crf 28 -preset ultrafast -movflags +faststart` in `.mp4` | Fast iteration. Encode is ~3-4× faster; files are ~5-8× smaller than `standard`. |
+| `high` | JPEG q=100 | HEVC `yuv444p10le -crf 12 -preset veryslow -tune animation -tag:v hvc1` in `.mp4` | Distribution-grade. 10-bit 4:4:4 — banding-free with full chroma; ~half the size of the old 8-bit 4:4:4 h264. Trades some compatibility for chroma accuracy. |
+| `standard` (default) | JPEG q=95 | HEVC `yuv420p10le -crf 18 -preset medium -tune animation -tag:v hvc1 -movflags +faststart` in `.mp4` | The default. 10-bit avoids the localized macroblock and gradient-banding artifacts 8-bit causes on smooth/animated content, at no size cost (typically smaller). Plays on Apple + modern players via the `hvc1` tag; for maximum web/older-device reach use `--codec libx264`. |
+| `draft` | JPEG q=80 | h264 `yuv420p -crf 28 -preset ultrafast -movflags +faststart` in `.mp4` (8-bit) | Fast iteration. Stays on 8-bit x264 for encode speed (x265 is 2–4× slower), so draft output *will* show compression artifacts — that's the speed/quality trade for a throwaway tier. |
 
 **Composition with explicit flags.** Individual flags (`--codec`, `--crf`, `--capture-format`, `--capture-quality`, `--container`) override the preset's value for that field; the rest of the preset still applies. Examples:
 
 ```
 h2v export hero.html --quality-preset max --codec libx264   # max tier, h264 (lossless yuv444p crf 0)
-h2v export hero.html --quality-preset high --codec libx265  # h265 at high tier, mp4
+h2v export hero.html --quality-preset standard --codec libx264  # default tier, 8-bit h264 (max web/device reach)
 h2v export hero.html --quality-preset draft --crf 23        # draft preset, custom CRF
 ```
 
@@ -309,17 +316,17 @@ Pick a codec and h2v auto-picks the matching container. Override `--container` o
 
 | `--codec` | Default container | Allowed containers | Notes |
 |---|---|---|---|
-| `libx264` (default) | `mp4` | `mp4`, `mov` | Universally compatible. CRF 18 is visually lossless. |
-| `libx265` | `mp4` | `mp4`, `mov` | ~30% smaller files at the same CRF. h2v adds `-tag:v hvc1` so the result plays in QuickTime/Safari. |
+| `libx265` (default) | `mp4` | `mp4`, `mov` | Default. Encodes **10-bit** (`yuv420p10le`), which eliminates the macroblock/banding artifacts 8-bit produces on smooth content — at no size cost (often smaller). h2v adds `-tag:v hvc1` so the result plays in QuickTime/Safari. |
+| `libx264` | `mp4` | `mp4`, `mov` | 8-bit; maximally compatible (web, older devices, hardware decoders everywhere). Use when reach matters more than the artifact fix. CRF 18 is visually lossless apart from the 8-bit limitations. |
 | `libvpx-vp9` | `webm` | `webm` | Web delivery without h264 licensing. CRF range similar (try `--crf 30` for typical web sizes). |
 | `prores_ks` | `mov` | `mov` | Editing-friendly master. Profile 3 (HQ, 10-bit 4:2:2) at most tiers, profile 4 (4444, 12-bit 4:4:4) at the `max` tier. Ignores `--crf`. |
 
 Examples:
 
 ```
-h2v export hero.html                                    # default: h264 in .mp4
-h2v export hero.html --codec libx265                    # h265 in .mp4
-h2v export hero.html --codec libx265 --container mov    # h265 in .mov
+h2v export hero.html                                    # default: 10-bit HEVC in .mp4
+h2v export hero.html --codec libx264                    # 8-bit h264 in .mp4 (max compatibility)
+h2v export hero.html --codec libx265 --container mov    # 10-bit HEVC in .mov
 h2v export hero.html --codec libvpx-vp9 --crf 30        # web-sized .webm
 h2v export hero.html --codec prores_ks                  # editing master in .mov
 h2v export hero.html --capture-format png --no-ffmpeg   # PNG frames, no encode
@@ -336,9 +343,9 @@ h2v export a.html --codec libx265 --out hero.webm       # error (h265 not allowe
 
 | Preset | Plays anywhere? | Caveats |
 |---|---|---|
-| `standard` | Yes | h264 yuv420p in mp4 — universal. |
-| `draft` | Yes | Same envelope as standard. |
-| `high` | Mostly | h264 yuv444p high444. Plays in Chrome/Firefox/VLC/mpv via **software decoding**. **Won't play in Safari (any OS), QuickTime, or any hardware decoder.** Not an OS lock; a hardware-decoder + Apple-player cliff. |
+| `standard` | Apple + modern | 10-bit HEVC (Main 10) yuv420p10le in mp4 with `hvc1`. Plays on macOS/iOS (QuickTime, Safari, hardware-decoded), modern Chrome (HEVC-capable hardware), and every NLE. **Not** a safe drop-in for arbitrary web pages or older Windows/Android — use `--codec libx264` for that. |
+| `draft` | Yes | 8-bit h264 yuv420p in mp4 — universal (but shows compression artifacts; it's the throwaway tier). |
+| `high` | Apple + pro tools | 10-bit 4:4:4 HEVC (Main 4:4:4 10). Plays in QuickTime/Safari and every pro NLE; the 4:4:4 profile is less broadly hardware-decoded than `standard`'s 4:2:0. Strictly more compatible than the old h264 High-4:4:4, which Safari/QuickTime rejected outright. |
 | `max` | Encodes anywhere | ProRes 4444 in `.mov`. Plays natively on macOS (QuickTime, Final Cut, Compressor). On Windows/Linux: VLC, mpv, Premiere, Resolve all handle it. The use case (NLE handoff) is platform-agnostic; every NLE on every OS handles ProRes 4444. |
 
 ---

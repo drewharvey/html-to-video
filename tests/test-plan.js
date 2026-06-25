@@ -201,7 +201,7 @@ scenario('--quality-preset max → .mov output (prores default)', ({ tmp }) => {
   assert(/\.mov/.test(r.stdout), `expected .mov extension (prores default at max): ${r.stdout}`);
 });
 
-scenario('--quality-preset high → .mp4 (h264 + jpeg q=100)', ({ tmp }) => {
+scenario('--quality-preset high → .mp4 (HEVC 10-bit 4:4:4 + jpeg q=100)', ({ tmp }) => {
   const file = path.join(tmp, 'meta.html');
   fs.writeFileSync(file, '<html><head><meta name="h2v-duration" content="1s"></head></html>');
   const r = runH2v(['export', file, '--quality-preset', 'high', '--dry-run'], { cwd: tmp });

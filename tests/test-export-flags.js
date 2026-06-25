@@ -138,6 +138,40 @@ scenario('--codec libx265 → output codec is hevc', ({ tmp }) => {
   assertEq(stream.codec_name, 'hevc', 'codec_name');
 });
 
+// Default (no flags) is 10-bit HEVC — the artifact-fix default. Guards the
+// QUALITY_PRESETS standard codec + the codec-keyed bit-depth invariant.
+scenario('default → 10-bit HEVC (hevc / yuv420p10le)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp);
+  const r = runH2v(defaultArgs(fx), { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const stream = ffprobe(path.join(tmp, 'output', 'tiny.mp4')).streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.codec_name, 'hevc', 'codec_name');
+  assertEq(stream.pix_fmt, 'yuv420p10le', 'pix_fmt (10-bit)');
+});
+
+// Explicit --codec libx264 must stay 8-bit — never the High 10 profile (no
+// hardware decode, rejected by QuickTime/Safari). Guards the bit-depth trap.
+scenario('--codec libx264 → 8-bit h264 (yuv420p, NOT High 10)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp);
+  const r = runH2v(defaultArgs(fx).concat(['--codec', 'libx264']), { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const stream = ffprobe(path.join(tmp, 'output', 'tiny.mp4')).streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.codec_name, 'h264', 'codec_name');
+  // 8-bit 4:2:0; the `j` (full-range) variant carries over from the JPEG
+  // capture. The point is it's 8-bit, never a 10-bit High 10 pix_fmt.
+  assert(/^yuvj?420p$/.test(stream.pix_fmt), `8-bit 4:2:0 pix_fmt, got "${stream.pix_fmt}"`);
+});
+
+// high tier → 10-bit 4:4:4 HEVC (cleaner + ~half the size of the old 8-bit h264).
+scenario('--quality-preset high → HEVC 10-bit 4:4:4 (yuv444p10le)', ({ tmp }) => {
+  const fx = writeTinyFixture(tmp);
+  const r = runH2v(defaultArgs(fx).concat(['--quality-preset', 'high']), { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  const stream = ffprobe(path.join(tmp, 'output', 'tiny.mp4')).streams.find((s) => s.codec_type === 'video');
+  assertEq(stream.codec_name, 'hevc', 'codec_name');
+  assertEq(stream.pix_fmt, 'yuv444p10le', 'pix_fmt (10-bit 4:4:4)');
+});
+
 scenario('--container mov (with libx264) → output is .mov with mov container', ({ tmp }) => {
   const fx = writeTinyFixture(tmp);
   const r = runH2v(defaultArgs(fx).concat(['--container', 'mov']), { cwd: tmp });
@@ -332,7 +366,7 @@ scenario('--concurrency 2 on a 4-anim bundle → 4 valid outputs', ({ tmp }) => 
     assert(fs.existsSync(out), `expected ${out} to exist`);
     const info = ffprobe(out);
     const stream = info.streams.find((s) => s.codec_type === 'video');
-    assertEq(stream.codec_name, 'h264', `clip${i} codec_name`);
+    assertEq(stream.codec_name, 'hevc', `clip${i} codec_name`);
   }
 });
 
