@@ -12,9 +12,10 @@ const VERSION = PKG.version || '0.0.0';
 
 const DEFAULTS = {
   fps: 60,
-  // Stepped-down fps when --alpha is on. Alpha codecs (PNG-in-MOV,
-  // ProRes 4444) are far larger per-frame than h264; halving the frame
-  // rate halves the file size with no perceptual loss for compositing.
+  // Stepped-down fps when --alpha is on. Alpha codecs (lossless qtrle,
+  // PNG-in-MOV, ProRes 4444) are far larger per-frame than the default
+  // (non-alpha) export; halving the frame rate halves the file size with
+  // no perceptual loss for compositing.
   alphaFps: 30,
   width: 1280,
   height: 720,
@@ -277,7 +278,8 @@ EXPORT FLAGS
                       Apple codec, renders correctly in CapCut, Premiere,
                       Resolve, FCP, AE at 4K and long durations. Steps
                       --fps down to ${DEFAULTS.alphaFps} unless --fps is passed explicitly
-                      (alpha output is much larger per-frame than h264).
+                      (alpha output is much larger per-frame than the
+                      default non-alpha export).
                       The page must not paint an opaque html/body
                       background — see docs/authoring.md.
 
@@ -751,9 +753,10 @@ function resolveExportOpts(opts) {
       process.exit(2);
     }
     // Step fps down to DEFAULTS.alphaFps (30) by default for --alpha.
-    // Alpha output (PNG-in-MOV or ProRes 4444) is much larger per-frame
-    // than h264 — at 60fps the file sizes get unwieldy fast (tens of MB
-    // per second). 30fps is perceptually clean for compositing work and
+    // Alpha output (lossless qtrle, PNG-in-MOV, or ProRes 4444) is much
+    // larger per-frame than the default non-alpha export — at 60fps the
+    // file sizes get unwieldy fast (tens of MB per second). 30fps is
+    // perceptually clean for compositing work and
     // halves the file size. Users who want 60fps alpha can pass --fps 60
     // explicitly.
     if (!opts.fpsExplicit) {

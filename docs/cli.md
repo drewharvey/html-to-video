@@ -126,7 +126,8 @@ EXPORT FLAGS
                       Apple codec, renders correctly in CapCut, Premiere,
                       Resolve, FCP, AE at 4K and long durations. Steps
                       --fps down to 30 unless --fps is passed explicitly
-                      (alpha output is much larger per-frame than h264).
+                      (alpha output is much larger per-frame than the
+                      default non-alpha export).
                       The page must not paint an opaque html/body
                       background — see docs/authoring.md.
 

@@ -376,7 +376,7 @@ h2v export my-clip.html --alpha
 
 Drop the `.mov` onto a timeline. Alpha is auto-detected. Done.
 
-> **Note on framerate:** `--alpha` records at 30 fps by default (alpha codecs are much larger per-frame than h264, and 60 fps doubles file size for no compositing-quality gain). Pass `--fps 60` explicitly if you need it.
+> **Note on framerate:** `--alpha` records at 30 fps by default (alpha codecs are much larger per-frame than the default non-alpha export, and 60 fps doubles file size for no compositing-quality gain). Pass `--fps 60` explicitly if you need it.
 
 For an opaque `body` background that you want to keep in browser preview but drop during recording, use the `data-h2v-recording` pattern below.
 
