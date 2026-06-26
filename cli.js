@@ -374,7 +374,15 @@ REVIEW FLAGS
                       are loaded via file:// URLs so a browser refresh
                       picks up edits to the source files.
   --no-open           Don't auto-open the browser; just print the path.
-                      (No auto-cleanup either.)
+                      (No auto-cleanup either.) With --vscode, skips the
+                      VS Code launch but still writes the page.
+  --vscode            Write the review page into the workspace (as
+                      ./review.html, or --out) with relative iframe srcs
+                      and open it in VS Code. Designed for the "Live
+                      Preview" extension (ms-vscode.live-server): right-
+                      click → Show Preview to view inside VS Code with
+                      hot reload on edits. The file is kept (not a
+                      tmpfile). Can't be combined with --paste.
   --keep              Don't delete the temp file on exit. (Implied by
                       --out and --no-open.)
   --paste             Read HTML from the terminal (or piped stdin) instead
@@ -487,6 +495,7 @@ function parseArgs(argv) {
     skipOpen: false,
     keep: false,
     paste: false,
+    vscode: false,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -561,6 +570,7 @@ function parseArgs(argv) {
     else if (a === '--no-open') opts.skipOpen = true;
     else if (a === '--paste') opts.paste = true;
     else if (a === '--keep') opts.keep = true;
+    else if (a === '--vscode') opts.vscode = true;
     else if (a === '--help' || a === '-h') {
       printHelp();
       process.exit(0);
@@ -1982,10 +1992,16 @@ function safeJsonForScript(value) {
   return JSON.stringify(value, null, 2).replace(/<\/(?=[a-zA-Z!])/g, '<\\/');
 }
 
-function buildReviewHtml(animations, { inline }) {
-  // In live mode (inline=false), drop animations[].html for entries that
-  // have a filePath — those will be loaded via iframe.src. Bundle frames
-  // (filePath: null) still need their html inlined as srcdoc.
+function buildReviewHtml(animations, { inline, relativeTo }) {
+  // Three serialization modes for single-file animations (bundle frames have
+  // no filePath, so they always inline as srcdoc):
+  //   relativeTo set  → src is a path relative to the review file's directory
+  //                     (VS Code / Live Preview mode: the page and animations
+  //                     are served over HTTP from the workspace, so file://
+  //                     won't load and inline freezes edits — a relative src
+  //                     lets the extension serve + hot-reload the real file).
+  //   inline=false    → src is a file:// URL (default browser mode).
+  //   inline=true     → html inlined as srcdoc (portable saved page).
   const serialized = animations.map((a) => {
     const base = {
       id: a.id,
@@ -1993,6 +2009,11 @@ function buildReviewHtml(animations, { inline }) {
       source: a.source,
       viewport: a.viewport,
     };
+    if (relativeTo && a.filePath) {
+      // POSIX separators — this is a URL path, not a filesystem path.
+      const rel = path.relative(relativeTo, a.filePath).split(path.sep).join('/');
+      return { ...base, src: rel };
+    }
     if (!inline && a.filePath) {
       return { ...base, src: pathToFileURL(a.filePath).href };
     }
@@ -2332,6 +2353,25 @@ function openInBrowser(filePath) {
   });
 }
 
+// Open a file in VS Code via the `code` CLI. Rejects (rather than crashing) if
+// `code` isn't on PATH — the caller falls back to printing manual steps. Used
+// by `h2v review --vscode` so the review page lands in the editor ready for the
+// Live Preview extension.
+function openInVSCode(filePath) {
+  return new Promise((resolve, reject) => {
+    let proc;
+    try {
+      proc = spawn('code', [filePath], { detached: true, stdio: 'ignore' });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    proc.on('error', reject);
+    proc.unref();
+    resolve();
+  });
+}
+
 // =========================================================================
 // --paste: read HTML content from the terminal (or piped stdin) instead
 // of from a file path.
@@ -2494,6 +2534,15 @@ function buildReviewAnimations(inputs) {
 }
 
 async function runReview(paths, opts) {
+  // --vscode serves the page (via the Live Preview extension) over HTTP from
+  // the workspace using relative iframe srcs. Pasted content lives in a temp
+  // dir outside the workspace, so it can't be served that way — reject the
+  // combination rather than emit a page whose iframes all fail to load.
+  if (opts.vscode && opts.paste) {
+    console.error('error: --vscode cannot be combined with --paste (pasted content has no workspace file to serve).');
+    process.exit(2);
+  }
+
   // --paste: same flow as export. Materialize to a temp dir; clean up
   // on process exit. The synthetic basename `paste` falls out of the
   // existing input-discovery and output-naming logic.
@@ -2524,6 +2573,57 @@ async function runReview(paths, opts) {
   if (animations.length === 0) {
     console.error('error: no animations to review.');
     process.exit(1);
+  }
+
+  // --vscode: write the review page into the workspace with relative iframe
+  // srcs so the Live Preview extension can serve it over HTTP and hot-reload
+  // on edits. Unlike the browser path, the file is kept (not a tmpfile) and we
+  // don't block — Live Preview owns the file's lifetime once it exists.
+  if (opts.vscode) {
+    const outPath = path.resolve(cwd, opts.outOverride || 'review.html');
+    const reviewDir = path.dirname(outPath);
+    const html = buildReviewHtml(animations, { inline: false, relativeTo: reviewDir });
+
+    // Single-file animations outside reviewDir get a `..`-relative src that
+    // Live Preview's workspace-rooted server can't reach — warn so a blank
+    // iframe isn't a mystery. (Bundle frames inline as srcdoc and are fine.)
+    for (const a of animations) {
+      if (a.filePath && path.relative(reviewDir, a.filePath).startsWith('..')) {
+        console.warn(
+          `warning: ${relativeToHere(a.filePath)} is outside the review page's folder ` +
+          `(${relativeToHere(reviewDir)}); Live Preview can't serve it, so it won't render. ` +
+          `Run from a directory that contains your animations.`
+        );
+      }
+    }
+
+    try {
+      fs.mkdirSync(reviewDir, { recursive: true });
+      fs.writeFileSync(outPath, html);
+    } catch (err) {
+      console.error(`error: could not write review file: ${err.message}`);
+      process.exit(1);
+    }
+
+    console.log(
+      `Review page (${animations.length} animation${animations.length === 1 ? '' : 's'}): ${relativeToHere(outPath)}`
+    );
+
+    if (!opts.skipOpen) {
+      try {
+        await openInVSCode(outPath);
+      } catch {
+        console.warn('warning: could not run `code` — is the VS Code CLI on your PATH?');
+        console.warn(`Open ${relativeToHere(outPath)} in VS Code manually.`);
+      }
+    }
+
+    console.log('');
+    console.log('To preview inside VS Code with hot reload:');
+    console.log('  1. Install the "Live Preview" extension (ms-vscode.live-server) if you haven\'t.');
+    console.log(`  2. Right-click ${path.basename(outPath)} in the Explorer → "Show Preview".`);
+    console.log('  Editing an animation file refreshes the preview automatically.');
+    return;
   }
 
   const isTempFile = !opts.outOverride;

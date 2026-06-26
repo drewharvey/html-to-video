@@ -352,4 +352,36 @@ scenario('single-file header omits the duplicate source span', ({ tmp }) => {
     'expected the source-vs-name de-duplication guard');
 });
 
+// ---------------------------------------------------------------------------
+// 14. --vscode mode: write ./review.html into the workspace with RELATIVE
+//     iframe srcs (not file://, not srcdoc) so the Live Preview extension
+//     can serve + hot-reload the real animation files over HTTP.
+// ---------------------------------------------------------------------------
+scenario('--vscode: single file → relative src, written to ./review.html', ({ tmp }) => {
+  const file = path.join(tmp, 'clip.html');
+  fs.writeFileSync(file,
+    '<html><head><meta name="h2v-duration" content="1s"></head><body>x</body></html>');
+  // Run with cwd=tmp; the animation path is relative to that cwd.
+  const r = runH2v(['review', 'clip.html', '--vscode', '--no-open'], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const outPath = path.join(tmp, 'review.html');
+  assert(fs.existsSync(outPath), 'review.html written into the workspace (cwd)');
+
+  const anims = extractAnimations(fs.readFileSync(outPath, 'utf-8'));
+  assertEq(anims.length, 1, 'animation count');
+  assertEq(anims[0].src, 'clip.html', 'relative src to the animation file');
+  assert(!anims[0].src.startsWith('file://'), `must not be a file:// URL; got ${anims[0].src}`);
+  assert(!('html' in anims[0]), `must not inline as srcdoc; got ${JSON.stringify(anims[0])}`);
+});
+
+// ---------------------------------------------------------------------------
+// 15. --vscode + --paste is rejected — pasted content has no workspace file
+//     for Live Preview to serve over HTTP.
+// ---------------------------------------------------------------------------
+scenario('--vscode --paste → exit 2', ({ tmp }) => {
+  const r = runH2v(['review', '--vscode', '--paste', '--no-open'], { cwd: tmp, input: '' });
+  assertEq(r.code, 2, 'exit code');
+});
+
 summary();

@@ -222,7 +222,15 @@ REVIEW FLAGS
                       are loaded via file:// URLs so a browser refresh
                       picks up edits to the source files.
   --no-open           Don't auto-open the browser; just print the path.
-                      (No auto-cleanup either.)
+                      (No auto-cleanup either.) With --vscode, skips the
+                      VS Code launch but still writes the page.
+  --vscode            Write the review page into the workspace (as
+                      ./review.html, or --out) with relative iframe srcs
+                      and open it in VS Code. Designed for the "Live
+                      Preview" extension (ms-vscode.live-server): right-
+                      click → Show Preview to view inside VS Code with
+                      hot reload on edits. The file is kept (not a
+                      tmpfile). Can't be combined with --paste.
   --keep              Don't delete the temp file on exit. (Implied by
                       --out and --no-open.)
   --paste             Read HTML from the terminal (or piped stdin) instead
@@ -544,6 +552,24 @@ By default (no `--out`), single-file animations are loaded via `<iframe src="fil
 When `--out <path>` is passed, h2v switches to **portable mode**: every animation is inlined into the page (`<iframe srcdoc>`), the file is self-contained, and you can move or send it to someone who doesn't have the source files. The trade-off is that refresh no longer reflects edits — the saved page is a frozen snapshot.
 
 Bundle frames (animations inside a single `ANIMATION_START` / `ANIMATION_END`-marked bundle file) have no individual file on disk, so they always inline as srcdoc — even in live mode. To refresh those after edits, re-run `h2v review <bundle>`.
+
+### Viewing inside VS Code (`--vscode`)
+
+`--vscode` is for previewing the review page **inside VS Code** instead of an external browser — so you can keep the editor, terminal, and preview in one window. It pairs with the [Live Preview](https://marketplace.visualstudio.com/items?itemName=ms-vscode.live-server) extension (`ms-vscode.live-server`).
+
+```
+h2v review ./anims --vscode
+```
+
+What it does:
+
+1. Writes the page to **`./review.html` in the workspace** (or the `--out` path), not a tmpfile. Unlike default live mode it uses **relative** iframe `src`s rather than `file://`, because Live Preview serves the page over HTTP and a webview can't load `file://` sub-resources.
+2. Opens that file in VS Code via the `code` CLI (skipped with `--no-open`; if `code` isn't on your PATH it prints the path to open manually).
+3. Prints the one manual step: right-click `review.html` in the Explorer → **Show Preview**.
+
+Because the iframes point at the real animation files (served by Live Preview), **editing an animation refreshes the preview automatically** — same iterate-edit-loop as browser live mode, without leaving VS Code. The `review.html` file is kept (it's gitignored and skipped by directory discovery); re-run the command after adding/removing animations.
+
+Notes: animations must live **under the review page's folder** (so Live Preview can serve them) — h2v warns about any that don't. `--vscode` can't be combined with `--paste` (pasted content has no workspace file to serve).
 
 **Sizing.** Each preview renders its iframe at the animation's *natural* design viewport (from `<meta name="h2v-viewport">` or the bundle marker's `viewport=`, default `1280×720`) and then scales the whole frame down to fit its card. Because the page sees the exact viewport it was authored for, nothing is clipped — any aspect ratio works, including square (`1080×1080`) and vertical (`1080×1920`). Portrait clips are capped to stay within the window. Each card's header shows the animation's aspect ratio and resolution (e.g. `16:9 · 1920×1080`).
 
