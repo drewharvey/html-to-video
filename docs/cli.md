@@ -215,24 +215,28 @@ EXPORT FLAGS
                       combined with positional path arguments.
 
 REVIEW FLAGS
-  --out <path>        Write the review page to this path instead of a
-                      tmpfile (implies --keep). Inlines each animation
-                      into the page (srcdoc) so the saved file is
-                      portable. Without --out, single-file animations
-                      are loaded via file:// URLs so a browser refresh
-                      picks up edits to the source files.
-  --no-open           Don't auto-open the browser; just print the path.
-                      (No auto-cleanup either.) With --vscode, skips the
-                      VS Code launch but still writes the page.
-  --vscode            Write the review page into the workspace (as
-                      ./review.html, or --out) with relative iframe srcs
-                      and open it in VS Code. Designed for the "Live
-                      Preview" extension (ms-vscode.live-server): right-
-                      click → Show Preview to view inside VS Code with
-                      hot reload on edits. The file is kept (not a
-                      tmpfile). Can't be combined with --paste.
-  --keep              Don't delete the temp file on exit. (Implied by
-                      --out and --no-open.)
+  By default, review starts a tiny local server and opens the page in
+  your browser; it re-reads your animations on each request and live-
+  reloads on edits (no manual refresh). Works in any browser and in VS
+  Code's built-in Simple Browser (run "Simple Browser: Show" and paste
+  the URL) — no extension required.
+  --no-serve          Don't run a server. Write a static page to a tmpfile
+                      and open it via file:// (the pre-server behavior:
+                      edits need a manual browser refresh). This is also
+                      the automatic fallback if the server can't bind.
+  --port <N>          Port for the review server (default: an OS-assigned
+                      free port). If this exact port is busy, falls back
+                      to --no-serve with a warning.
+  --host <addr>       Bind address for the server (default 127.0.0.1,
+                      loopback only).
+  --lan               Bind 0.0.0.0 so other devices on your network (e.g.
+                      a phone) can open the printed URL. May trigger a
+                      firewall prompt; exposes the page to the LAN.
+  --out <path>        Write a portable, self-contained page to this path
+                      (no server) and exit. Inlines each animation
+                      (srcdoc) so the saved file can be moved or shared.
+  --no-open           Don't auto-open the browser; just print the URL/path.
+  --keep              (--no-serve only) Don't delete the tmpfile on exit.
   --paste             Read HTML from the terminal (or piped stdin) instead
                       of from a file path. Same semantics as the export
                       flag of the same name; cannot be combined with
@@ -535,41 +539,34 @@ Scaling isn't perfectly linear — CPU contention slows individual captures slig
 `h2v review` builds a single HTML page that embeds every animation at the given paths as `<iframe>`s, with a Reset-all button. Useful for inspecting a directory of animations before exporting them, or for sharing one file with someone who doesn't have h2v installed.
 
 ```
-h2v review ./anims        # default: write to /tmp, open in browser, Ctrl-C to delete
+h2v review ./anims        # default: serve locally, open in browser, live-reload on edits
 h2v review bundle.html    # also accepts bundle files
 ```
 
-Default behavior:
+### Default: live server with auto-reload
 
-1. Write the page to a tmpfile (`os.tmpdir()/h2v-review-<timestamp>.html`).
-2. Open it in your default browser (`open` / `xdg-open` / `start` depending on platform).
-3. Print `Press Ctrl-C to close` and wait. On `SIGINT` / `SIGTERM`, delete the tmpfile and exit.
+By default, `h2v review` starts a tiny local HTTP server (no extra dependencies — Node's built-in `http`) and opens the page in your browser:
 
-### Live mode vs portable mode
+1. Bind `127.0.0.1` on an OS-assigned free port (loopback only — not reachable from the network, and no macOS firewall prompt).
+2. Open the printed `http://localhost:<port>/` in your default browser.
+3. Re-read the animations from disk on **every request** and inject a tiny `EventSource` client. A file watcher pushes a reload over Server-Sent Events whenever a watched file changes — so **editing an animation refreshes the page automatically**, no manual ⌘R. Adding/removing animations is picked up too (the page re-discovers per request).
+4. Print `Press Ctrl-C to stop` and wait. The server's lifetime is the process's; Ctrl-C closes it. There's no tmpfile to clean up — the page is served from memory.
 
-By default (no `--out`), single-file animations are loaded via `<iframe src="file://…">` pointing at the source on disk — so when you edit an animation and refresh the browser, the iframe picks up the new content. This makes the review page the durable visual surface for an iterate-edit-refresh loop: keep one tab open, edit files in your editor, hit ⌘R.
+This works in any browser, on a phone via `--lan`, and inside VS Code's built-in **Simple Browser** (run "Simple Browser: Show" from the command palette and paste the URL) — no extension required. When run from a VS Code terminal, h2v prints that hint automatically.
 
-When `--out <path>` is passed, h2v switches to **portable mode**: every animation is inlined into the page (`<iframe srcdoc>`), the file is self-contained, and you can move or send it to someone who doesn't have the source files. The trade-off is that refresh no longer reflects edits — the saved page is a frozen snapshot.
+### `--no-serve` (static `file://` page)
 
-Bundle frames (animations inside a single `ANIMATION_START` / `ANIMATION_END`-marked bundle file) have no individual file on disk, so they always inline as srcdoc — even in live mode. To refresh those after edits, re-run `h2v review <bundle>`.
+`--no-serve` reverts to the pre-server behavior: write the page to a tmpfile and open it via `file://`. Single-file animations load via `<iframe src="file://…">`, so a **manual** browser refresh (⌘R) picks up edits; bundle frames inline as srcdoc. The tmpfile is deleted on Ctrl-C unless `--keep`. This is also the **automatic fallback** if the server can't bind a port (printed with a warning).
 
-### Viewing inside VS Code (`--vscode`)
+### `--out` (portable, self-contained page)
 
-`--vscode` is for previewing the review page **inside VS Code** instead of an external browser — so you can keep the editor, terminal, and preview in one window. It pairs with the [Live Preview](https://marketplace.visualstudio.com/items?itemName=ms-vscode.live-server) extension (`ms-vscode.live-server`).
+`--out <path>` writes a self-contained page (every animation inlined as `<iframe srcdoc>`) and exits — no server. Move or send the file to someone without the source files. The trade-off is that it's a frozen snapshot: it doesn't reflect later edits.
 
-```
-h2v review ./anims --vscode
-```
+### Ports and network access
 
-What it does:
+`--port <N>` pins the port (if that exact port is busy it falls back to `--no-serve` with a warning, rather than silently picking another). `--host <addr>` sets the bind address; `--lan` is shorthand for `0.0.0.0`, which lets other devices on your network open the printed URL (e.g. a phone) — this may trigger a firewall prompt and exposes the page to the LAN, so it's opt-in.
 
-1. Writes the page to **`./review.html` in the workspace** (or the `--out` path), not a tmpfile. Unlike default live mode it uses **relative** iframe `src`s rather than `file://`, because Live Preview serves the page over HTTP and a webview can't load `file://` sub-resources.
-2. Opens that file in VS Code via the `code` CLI (skipped with `--no-open`; if `code` isn't on your PATH it prints the path to open manually).
-3. Prints the one manual step: right-click `review.html` in the Explorer → **Show Preview**.
-
-Because the iframes point at the real animation files (served by Live Preview), **editing an animation refreshes the preview automatically** — same iterate-edit-loop as browser live mode, without leaving VS Code. The `review.html` file is kept (it's gitignored and skipped by directory discovery); re-run the command after adding/removing animations.
-
-Notes: animations must live **under the review page's folder** (so Live Preview can serve them) — h2v warns about any that don't. `--vscode` can't be combined with `--paste` (pasted content has no workspace file to serve).
+Bundle frames (animations inside a single `ANIMATION_START` / `ANIMATION_END`-marked bundle file) have no individual file on disk, so they always inline as srcdoc. In serve mode the bundle file is re-read per request, so edits to it still show up on reload.
 
 **Sizing.** Each preview renders its iframe at the animation's *natural* design viewport (from `<meta name="h2v-viewport">` or the bundle marker's `viewport=`, default `1280×720`) and then scales the whole frame down to fit its card. Because the page sees the exact viewport it was authored for, nothing is clipped — any aspect ratio works, including square (`1080×1080`) and vertical (`1080×1920`). Portrait clips are capped to stay within the window. Each card's header shows the animation's aspect ratio and resolution (e.g. `16:9 · 1920×1080`).
 

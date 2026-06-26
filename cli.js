@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('http');
 const { pathToFileURL } = require('url');
 const { spawn, spawnSync } = require('child_process');
 
@@ -367,24 +368,28 @@ EXPORT FLAGS
                       combined with positional path arguments.
 
 REVIEW FLAGS
-  --out <path>        Write the review page to this path instead of a
-                      tmpfile (implies --keep). Inlines each animation
-                      into the page (srcdoc) so the saved file is
-                      portable. Without --out, single-file animations
-                      are loaded via file:// URLs so a browser refresh
-                      picks up edits to the source files.
-  --no-open           Don't auto-open the browser; just print the path.
-                      (No auto-cleanup either.) With --vscode, skips the
-                      VS Code launch but still writes the page.
-  --vscode            Write the review page into the workspace (as
-                      ./review.html, or --out) with relative iframe srcs
-                      and open it in VS Code. Designed for the "Live
-                      Preview" extension (ms-vscode.live-server): right-
-                      click → Show Preview to view inside VS Code with
-                      hot reload on edits. The file is kept (not a
-                      tmpfile). Can't be combined with --paste.
-  --keep              Don't delete the temp file on exit. (Implied by
-                      --out and --no-open.)
+  By default, review starts a tiny local server and opens the page in
+  your browser; it re-reads your animations on each request and live-
+  reloads on edits (no manual refresh). Works in any browser and in VS
+  Code's built-in Simple Browser (run "Simple Browser: Show" and paste
+  the URL) — no extension required.
+  --no-serve          Don't run a server. Write a static page to a tmpfile
+                      and open it via file:// (the pre-server behavior:
+                      edits need a manual browser refresh). This is also
+                      the automatic fallback if the server can't bind.
+  --port <N>          Port for the review server (default: an OS-assigned
+                      free port). If this exact port is busy, falls back
+                      to --no-serve with a warning.
+  --host <addr>       Bind address for the server (default 127.0.0.1,
+                      loopback only).
+  --lan               Bind 0.0.0.0 so other devices on your network (e.g.
+                      a phone) can open the printed URL. May trigger a
+                      firewall prompt; exposes the page to the LAN.
+  --out <path>        Write a portable, self-contained page to this path
+                      (no server) and exit. Inlines each animation
+                      (srcdoc) so the saved file can be moved or shared.
+  --no-open           Don't auto-open the browser; just print the URL/path.
+  --keep              (--no-serve only) Don't delete the tmpfile on exit.
   --paste             Read HTML from the terminal (or piped stdin) instead
                       of from a file path. Same semantics as the export
                       flag of the same name; cannot be combined with
@@ -495,7 +500,11 @@ function parseArgs(argv) {
     skipOpen: false,
     keep: false,
     paste: false,
-    vscode: false,
+    // review serve mode (default on): h2v serves the review page over HTTP and
+    // live-reloads it on edits. --no-serve reverts to the static file:// page.
+    serve: true,
+    port: null,
+    host: '127.0.0.1',
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -570,7 +579,10 @@ function parseArgs(argv) {
     else if (a === '--no-open') opts.skipOpen = true;
     else if (a === '--paste') opts.paste = true;
     else if (a === '--keep') opts.keep = true;
-    else if (a === '--vscode') opts.vscode = true;
+    else if (a === '--no-serve') opts.serve = false;
+    else if (a === '--port') opts.port = parsePositiveInt(requireValue('--port'), '--port');
+    else if (a === '--host') opts.host = requireValue('--host');
+    else if (a === '--lan') opts.host = '0.0.0.0';
     else if (a === '--help' || a === '-h') {
       printHelp();
       process.exit(0);
@@ -1992,16 +2004,17 @@ function safeJsonForScript(value) {
   return JSON.stringify(value, null, 2).replace(/<\/(?=[a-zA-Z!])/g, '<\\/');
 }
 
-function buildReviewHtml(animations, { inline, relativeTo }) {
-  // Three serialization modes for single-file animations (bundle frames have
-  // no filePath, so they always inline as srcdoc):
-  //   relativeTo set  → src is a path relative to the review file's directory
-  //                     (VS Code / Live Preview mode: the page and animations
-  //                     are served over HTTP from the workspace, so file://
-  //                     won't load and inline freezes edits — a relative src
-  //                     lets the extension serve + hot-reload the real file).
-  //   inline=false    → src is a file:// URL (default browser mode).
-  //   inline=true     → html inlined as srcdoc (portable saved page).
+function buildReviewHtml(animations, { inline, liveReload }) {
+  // Serialization for single-file animations (bundle frames have no filePath,
+  // so they always inline as srcdoc):
+  //   inline=false → src is a file:// URL (a browser refresh re-fetches from
+  //                  disk — used by the static --no-serve page).
+  //   inline=true  → html inlined as srcdoc. Used both for the portable --out
+  //                  page and for the live server, which re-reads each file and
+  //                  regenerates the page per request, so the embedded srcdoc is
+  //                  always current and a reload reflects edits.
+  // liveReload=true injects a tiny SSE client that reloads the page when the
+  // server pushes a change (serve mode only).
   const serialized = animations.map((a) => {
     const base = {
       id: a.id,
@@ -2009,11 +2022,6 @@ function buildReviewHtml(animations, { inline, relativeTo }) {
       source: a.source,
       viewport: a.viewport,
     };
-    if (relativeTo && a.filePath) {
-      // POSIX separators — this is a URL path, not a filesystem path.
-      const rel = path.relative(relativeTo, a.filePath).split(path.sep).join('/');
-      return { ...base, src: rel };
-    }
     if (!inline && a.filePath) {
       return { ...base, src: pathToFileURL(a.filePath).href };
     }
@@ -2324,7 +2332,18 @@ document.getElementById('resetAll').addEventListener('click', () => {
     reload(card.querySelector('iframe'), ANIMATIONS[i]);
   });
 });
-</script>
+</script>${liveReload ? `
+<script>
+// Live-reload client (serve mode). The h2v review server pushes a message
+// whenever a watched animation file changes; we reload to pick it up. Wrapped
+// in try/catch so a missing EventSource (or a webview that blocks it) is inert.
+(function () {
+  try {
+    var es = new EventSource('/__h2v_reload');
+    es.onmessage = function () { location.reload(); };
+  } catch (e) { /* live reload unavailable; manual refresh still works */ }
+})();
+</script>` : ''}
 </body>
 </html>
 `;
@@ -2353,22 +2372,84 @@ function openInBrowser(filePath) {
   });
 }
 
-// Open a file in VS Code via the `code` CLI. Rejects (rather than crashing) if
-// `code` isn't on PATH — the caller falls back to printing manual steps. Used
-// by `h2v review --vscode` so the review page lands in the editor ready for the
-// Live Preview extension.
-function openInVSCode(filePath) {
-  return new Promise((resolve, reject) => {
-    let proc;
+// Debounce: collapse a burst of calls (editors fire several fs events per
+// save) into one trailing call after `ms` of quiet.
+function debounce(fn, ms) {
+  let timer = null;
+  return () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(fn, ms);
+  };
+}
+
+// Watch the review input paths for changes, calling onChange (debounced) on any
+// edit. Watching a file catches its own edits; watching a directory catches
+// edits to and additions/removals of files inside it (so the live page picks up
+// structural changes too, since it re-discovers per request). Returns the
+// watchers so the caller can close them on shutdown. Unwatchable paths are
+// skipped silently — a missing watcher just means no auto-reload for that path.
+function startReviewWatch(paths, cwd, onChange) {
+  const targets = paths.length ? paths : [cwd];
+  const watchers = [];
+  for (const p of targets) {
     try {
-      proc = spawn('code', [filePath], { detached: true, stdio: 'ignore' });
-    } catch (err) {
-      reject(err);
+      watchers.push(fs.watch(path.resolve(cwd, p), { persistent: true }, onChange));
+    } catch { /* ignore unwatchable path */ }
+  }
+  return watchers;
+}
+
+// Start the review HTTP server. buildPage() returns the current review HTML
+// (fresh discovery + file reads) with the live-reload client injected. Serves
+// the page at / and a Server-Sent-Events stream at /__h2v_reload that the
+// watcher pokes via the returned broadcast(). Resolves once listening (with the
+// actual port); rejects if the socket can't bind — the caller falls back to the
+// static file:// page. Bound to host (127.0.0.1 by default → loopback only, no
+// LAN exposure and no macOS firewall prompt; --lan binds 0.0.0.0).
+function startReviewServer({ buildPage, host, port }) {
+  const clients = new Set();
+  const server = http.createServer((req, res) => {
+    const url = (req.url || '/').split('?')[0];
+    if (url === '/__h2v_reload') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      res.write('retry: 1000\n\n');
+      clients.add(res);
+      req.on('close', () => clients.delete(res));
       return;
     }
-    proc.on('error', reject);
-    proc.unref();
-    resolve();
+    if (url === '/' || url === '/index.html' || url === '/review.html') {
+      let html;
+      try {
+        html = buildPage();
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end(`review build error: ${err && err.message ? err.message : err}`);
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('not found');
+  });
+
+  const broadcast = () => {
+    for (const res of clients) {
+      try { res.write('data: reload\n\n'); } catch { clients.delete(res); }
+    }
+  };
+
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    // port null/0 → OS picks a free ephemeral port (collision-free default).
+    server.listen(port || 0, host, () => {
+      resolve({ server, broadcast, port: server.address().port });
+    });
   });
 }
 
@@ -2534,15 +2615,6 @@ function buildReviewAnimations(inputs) {
 }
 
 async function runReview(paths, opts) {
-  // --vscode serves the page (via the Live Preview extension) over HTTP from
-  // the workspace using relative iframe srcs. Pasted content lives in a temp
-  // dir outside the workspace, so it can't be served that way — reject the
-  // combination rather than emit a page whose iframes all fail to load.
-  if (opts.vscode && opts.paste) {
-    console.error('error: --vscode cannot be combined with --paste (pasted content has no workspace file to serve).');
-    process.exit(2);
-  }
-
   // --paste: same flow as export. Materialize to a temp dir; clean up
   // on process exit. The synthetic basename `paste` falls out of the
   // existing input-discovery and output-naming logic.
@@ -2575,66 +2647,56 @@ async function runReview(paths, opts) {
     process.exit(1);
   }
 
-  // --vscode: write the review page into the workspace with relative iframe
-  // srcs so the Live Preview extension can serve it over HTTP and hot-reload
-  // on edits. Unlike the browser path, the file is kept (not a tmpfile) and we
-  // don't block — Live Preview owns the file's lifetime once it exists.
-  if (opts.vscode) {
-    const outPath = path.resolve(cwd, opts.outOverride || 'review.html');
-    const reviewDir = path.dirname(outPath);
-    const html = buildReviewHtml(animations, { inline: false, relativeTo: reviewDir });
-
-    // Single-file animations outside reviewDir get a `..`-relative src that
-    // Live Preview's workspace-rooted server can't reach — warn so a blank
-    // iframe isn't a mystery. (Bundle frames inline as srcdoc and are fine.)
-    for (const a of animations) {
-      if (a.filePath && path.relative(reviewDir, a.filePath).startsWith('..')) {
-        console.warn(
-          `warning: ${relativeToHere(a.filePath)} is outside the review page's folder ` +
-          `(${relativeToHere(reviewDir)}); Live Preview can't serve it, so it won't render. ` +
-          `Run from a directory that contains your animations.`
-        );
-      }
-    }
-
-    try {
-      fs.mkdirSync(reviewDir, { recursive: true });
-      fs.writeFileSync(outPath, html);
-    } catch (err) {
-      console.error(`error: could not write review file: ${err.message}`);
-      process.exit(1);
-    }
-
-    console.log(
-      `Review page (${animations.length} animation${animations.length === 1 ? '' : 's'}): ${relativeToHere(outPath)}`
-    );
-
+  // --out: a portable, self-contained inline page (a saved artifact). Never
+  // served, never blocks — write it, open it, done.
+  if (opts.outOverride) {
+    const outPath = path.resolve(cwd, opts.outOverride);
+    writeReviewFileOrExit(buildReviewHtml(animations, { inline: true }), outPath);
+    console.log(`Review page (${reviewCount(animations.length)}): ${relativeToHere(outPath)}`);
     if (!opts.skipOpen) {
-      try {
-        await openInVSCode(outPath);
-      } catch {
-        console.warn('warning: could not run `code` — is the VS Code CLI on your PATH?');
-        console.warn(`Open ${relativeToHere(outPath)} in VS Code manually.`);
+      try { await openInBrowser(outPath); }
+      catch (err) {
+        console.warn(`warning: could not auto-open browser: ${err.message}`);
+        console.warn(`open this file manually: ${relativeToHere(outPath)}`);
       }
     }
-
-    console.log('');
-    console.log('To preview inside VS Code with hot reload:');
-    console.log('  1. Install the "Live Preview" extension (ms-vscode.live-server) if you haven\'t.');
-    console.log(`  2. Right-click ${path.basename(outPath)} in the Explorer → "Show Preview".`);
-    console.log('  Editing an animation file refreshes the preview automatically.');
     return;
   }
 
-  const isTempFile = !opts.outOverride;
-  // --out → inline all animations as srcdoc so the saved page is
-  // portable. Default tmpfile → live mode: single-file iframes point at
-  // file:// URLs so a browser refresh picks up edits to source files.
-  const html = buildReviewHtml(animations, { inline: !isTempFile });
-  const outPath = isTempFile
-    ? path.join(os.tmpdir(), `h2v-review-${Date.now()}.html`)
-    : path.resolve(cwd, opts.outOverride);
+  // Default: a live server that re-reads the animations on every request and
+  // pushes a reload when any watched file changes — so edits appear without a
+  // manual refresh, in any browser and in VS Code's Simple Browser. --no-serve
+  // (or a bind failure) drops back to the static file:// page.
+  if (opts.serve) {
+    const buildPage = () => {
+      const anims = buildReviewAnimations(discoverInputs(paths, cwd));
+      if (anims.length === 0) throw new Error('no animations to review');
+      return buildReviewHtml(anims, { inline: true, liveReload: true });
+    };
+    let started = null;
+    try {
+      started = await startReviewServer({ buildPage, host: opts.host, port: opts.port });
+    } catch (err) {
+      const why = err && err.code === 'EADDRINUSE'
+        ? `port ${opts.port} is already in use`
+        : (err && err.message) || String(err);
+      console.warn(`warning: could not start the review server (${why}); falling back to a static page.`);
+    }
+    if (started) {
+      await serveReview(started, paths, cwd, opts, animations.length);
+      return;
+    }
+    // else: fall through to the static page
+  }
 
+  await staticReview(animations, opts);
+}
+
+function reviewCount(n) {
+  return `${n} animation${n === 1 ? '' : 's'}`;
+}
+
+function writeReviewFileOrExit(html, outPath) {
   try {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, html);
@@ -2642,28 +2704,77 @@ async function runReview(paths, opts) {
     console.error(`error: could not write review file: ${err.message}`);
     process.exit(1);
   }
+}
 
-  console.log(
-    `Review page (${animations.length} animation${animations.length === 1 ? '' : 's'}): ${outPath}`
-  );
+// First non-internal IPv4 address — used to print a phone-reachable URL when
+// the server binds 0.0.0.0 (--lan). Null if none (then we print "localhost").
+function lanAddress() {
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const ni of ifaces[name] || []) {
+      if (ni.family === 'IPv4' && !ni.internal) return ni.address;
+    }
+  }
+  return null;
+}
+
+async function serveReview(started, paths, cwd, opts, count) {
+  const { server, broadcast, port } = started;
+  const displayHost =
+    opts.host === '0.0.0.0' ? (lanAddress() || 'localhost') :
+    opts.host === '127.0.0.1' ? 'localhost' :
+    opts.host;
+  const url = `http://${displayHost}:${port}/`;
+
+  console.log(`Review server (${reviewCount(count)}): ${url}`);
+
+  // Watch the inputs; reload connected clients (debounced) on any change.
+  const watchers = startReviewWatch(paths, cwd, debounce(broadcast, 120));
 
   if (!opts.skipOpen) {
-    try {
-      await openInBrowser(outPath);
-    } catch (err) {
+    openInBrowser(url).catch((err) => {
+      console.warn(`warning: could not auto-open browser: ${err.message}`);
+      console.warn(`open this URL manually: ${url}`);
+    });
+  }
+  if (process.env.TERM_PROGRAM === 'vscode') {
+    console.log('In VS Code: run "Simple Browser: Show" (Cmd+Shift+P) and paste the URL to preview in a tab — no extension needed.');
+  }
+  console.log('Watching for changes — edits reload automatically. Press Ctrl-C to stop.');
+
+  const shutdown = () => {
+    try { server.close(); } catch { /* ignore */ }
+    for (const w of watchers) { try { w.close(); } catch { /* ignore */ } }
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  // The listening socket keeps the event loop alive; block until a signal.
+  await new Promise(() => {});
+}
+
+async function staticReview(animations, opts) {
+  // Static file:// page (--no-serve, or the serve fallback). Single-file
+  // animations load via file:// so a manual browser refresh re-fetches edits;
+  // bundle frames inline as srcdoc. Written to a tmpfile, opened, deleted on
+  // Ctrl-C (unless --keep / --no-open).
+  const outPath = path.join(os.tmpdir(), `h2v-review-${Date.now()}.html`);
+  writeReviewFileOrExit(buildReviewHtml(animations, { inline: false }), outPath);
+
+  console.log(`Review page (${reviewCount(animations.length)}): ${outPath}`);
+
+  if (!opts.skipOpen) {
+    try { await openInBrowser(outPath); }
+    catch (err) {
       console.warn(`warning: could not auto-open browser: ${err.message}`);
       console.warn(`open this file manually: ${outPath}`);
     }
   }
 
-  // Decide whether to wait + clean up. We only auto-clean tmpfiles, and
-  // only when the browser was actually opened (otherwise the user
-  // probably wants the path to do something with).
-  const willCleanup = isTempFile && !opts.keep && !opts.skipOpen;
-
+  const willCleanup = !opts.keep && !opts.skipOpen;
   if (willCleanup) {
     console.log('Press Ctrl-C to close (and delete the temp file).');
-
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
@@ -2677,16 +2788,10 @@ async function runReview(paths, opts) {
         }
       }
     };
-
     process.on('SIGINT', () => { cleanup(); process.exit(0); });
     process.on('SIGTERM', () => { cleanup(); process.exit(0); });
     process.on('exit', cleanup);
-
-    // Keep the event loop alive until a signal arrives. `await new Promise`
-    // alone is NOT enough on macOS — Node exits when there are no active
-    // libuv handles (timers, sockets, etc.), and a pending Promise isn't
-    // a handle. setInterval registers a real timer handle that keeps the
-    // loop running until the signal handler calls process.exit().
+    // setInterval keeps the loop alive (a pending Promise isn't a libuv handle).
     setInterval(() => {}, 1 << 30);
     await new Promise(() => {});
   }

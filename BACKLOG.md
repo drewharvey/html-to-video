@@ -16,20 +16,12 @@ Add a single control on the review page that switches the theme for *all* embedd
 - The global control drives each iframe the same way the per-card switcher does (sets `data-theme` on the iframe document's `<html>`), fanning out to all iframes. Decide how it composes with subsequent per-card overrides (global sets all; a card can still diverge afterward).
 - Lives in `buildReviewHtml` (the global control markup + the fan-out JS). Only render the control when the common set is non-empty.
 
-## VS Code integration for `h2v review` mode
+## VS Code integration / live-reload for `h2v review` mode — RESOLVED
 
-**Noted:** 2026-06-25
+**Noted:** 2026-06-25 · **Resolved:** 2026-06-26 (branch `vscode-review-integration`)
 
-Make `h2v review` viewable inside VS Code without switching to a browser, ideally with hot reload on edits. Scoped in discussion; not built.
+Goal: view the review inside VS Code without switching to a browser, with hot reload on edits.
 
-**Phase 1 — prototype "VS Code Integration" (IMPLEMENTED, pending real-world verification).** Design specifically around viewing the review *inside VS Code*, **even if it requires an installed extension** (e.g. Microsoft's Live Preview). This is the biggest-win case and the one worth proving: Claude running in the VS Code terminal while the review previews in a VS Code pane, no window switch.
+**Phase 1** (confirmed working) prototyped this as `--vscode` + the Live Preview extension. **Phase 2 superseded it:** `h2v review` now **serves the page itself by default** (tiny built-in Node `http` server + SSE live-reload + file watch) — so live reload works with no extension, in any browser *and* in VS Code's built-in Simple Browser, and the plain-browser flow also gains auto-reload (no more manual ⌘R). The Phase-1 `--vscode` flag was removed as redundant. `--no-serve` keeps the old static `file://` page (also the auto-fallback if the port can't bind); `--out` is the portable self-contained file; `--port`/`--host`/`--lan` tune the server. Covered by `tests/test-review-serve.js`.
 
-Built on branch `vscode-review-integration` as `h2v review --vscode`: writes `./review.html` into the workspace with relative iframe `src`s, opens it in VS Code via the `code` CLI, and prints the "right-click → Show Preview" step. Unit-tested (relative-src output, paste rejection). **Still to verify by hand:** that Live Preview actually hot-reloads the preview when a *referenced animation file* (an iframe sub-resource) changes — not just when `review.html` itself changes. If it only reloads on the top file, Phase 1 needs a nudge (e.g. a watcher that touches `review.html`, or a small injected reload script). Confirm before calling Phase 1 done.
-
-**Phase 2 — abstract / generalize (only if Phase 1 lands).** Consider making it more generic or multi-tier: a self-contained, no-extension path (`--serve [--watch]` = a tiny Node `http` server + SSE live-reload, works in the built-in Simple Browser), and/or other surfaces. Keep the static `file://` behavior the default; any server/watch stays opt-in so `review` doesn't grow a networking surface (port handling, firewall prompt, bind-address choice) in the common case.
-
-**Findings so far:**
-
-- `h2v review` is currently static: it writes a self-contained HTML file and opens the OS browser via `file://`; no server, no watch. The process only stays alive to clean up the tmpfile on Ctrl-C.
-- VS Code preview surfaces (the built-in Simple Browser, and the Live Preview extension) serve over HTTP and won't load `file://` iframe sub-resources, so the current tmpfile won't render in them. `--out` produces an inline/self-contained page that *does* render, but it's frozen (no hot reload).
-- Most promising Phase-1 path: a **`--link`** mode that writes the review page into the workspace with relative iframe `src`s so the Live Preview extension serves and hot-reloads it. Before relying on it, verify Live Preview reloads on a referenced *sub-resource* change (an edited animation file inside an iframe), not just the top-level file.
+**Remaining:** hands-on confirmation on macOS that SSE reload works inside the Simple Browser webview (verified headlessly via curl + the integration test; user to confirm the in-VS-Code experience).

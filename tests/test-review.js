@@ -193,12 +193,13 @@ scenario('per-file viewport meta drives iframe sizing in review', ({ tmp }) => {
 //    Each entry should carry `src` instead of `html` — verifies the
 //    iterate-edit-refresh workflow is wired up correctly.
 // ---------------------------------------------------------------------------
-scenario('default (no --out): single file → src=file:// (live mode)', ({ tmp }) => {
+scenario('--no-serve: single file → src=file:// (static mode)', ({ tmp }) => {
   const file = path.join(tmp, 'clip.html');
   fs.writeFileSync(file,
     '<html><head><meta name="h2v-duration" content="1s"></head><body>x</body></html>');
-  // No --out → temp file path; --no-open prevents the cleanup wait loop.
-  const r = runH2v(['review', file, '--no-open']);
+  // --no-serve → static tmpfile path; --no-open prevents the cleanup wait loop.
+  // (The default now runs a live server, which would block this sync harness.)
+  const r = runH2v(['review', file, '--no-serve', '--no-open']);
   assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
 
   // Pull the temp path out of stdout.
@@ -222,8 +223,8 @@ scenario('default (no --out): single file → src=file:// (live mode)', ({ tmp }
 // 9. Live mode: bundle frames have no individual file on disk, so they
 //    must still inline as srcdoc (carry `html`, not `src`).
 // ---------------------------------------------------------------------------
-scenario('default (no --out): bundle frames stay inlined (no individual files)', () => {
-  const r = runH2v(['review', 'demo/bundle.html', '--no-open']);
+scenario('--no-serve: bundle frames stay inlined (no individual files)', () => {
+  const r = runH2v(['review', 'demo/bundle.html', '--no-serve', '--no-open']);
   assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
   const m = r.stdout.match(/Review page \([^)]+\): (\S+)/);
   assert(m, `expected "Review page (...): <path>" in stdout: ${r.stdout}`);
@@ -352,36 +353,8 @@ scenario('single-file header omits the duplicate source span', ({ tmp }) => {
     'expected the source-vs-name de-duplication guard');
 });
 
-// ---------------------------------------------------------------------------
-// 14. --vscode mode: write ./review.html into the workspace with RELATIVE
-//     iframe srcs (not file://, not srcdoc) so the Live Preview extension
-//     can serve + hot-reload the real animation files over HTTP.
-// ---------------------------------------------------------------------------
-scenario('--vscode: single file → relative src, written to ./review.html', ({ tmp }) => {
-  const file = path.join(tmp, 'clip.html');
-  fs.writeFileSync(file,
-    '<html><head><meta name="h2v-duration" content="1s"></head><body>x</body></html>');
-  // Run with cwd=tmp; the animation path is relative to that cwd.
-  const r = runH2v(['review', 'clip.html', '--vscode', '--no-open'], { cwd: tmp });
-  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
-
-  const outPath = path.join(tmp, 'review.html');
-  assert(fs.existsSync(outPath), 'review.html written into the workspace (cwd)');
-
-  const anims = extractAnimations(fs.readFileSync(outPath, 'utf-8'));
-  assertEq(anims.length, 1, 'animation count');
-  assertEq(anims[0].src, 'clip.html', 'relative src to the animation file');
-  assert(!anims[0].src.startsWith('file://'), `must not be a file:// URL; got ${anims[0].src}`);
-  assert(!('html' in anims[0]), `must not inline as srcdoc; got ${JSON.stringify(anims[0])}`);
-});
-
-// ---------------------------------------------------------------------------
-// 15. --vscode + --paste is rejected — pasted content has no workspace file
-//     for Live Preview to serve over HTTP.
-// ---------------------------------------------------------------------------
-scenario('--vscode --paste → exit 2', ({ tmp }) => {
-  const r = runH2v(['review', '--vscode', '--paste', '--no-open'], { cwd: tmp, input: '' });
-  assertEq(r.code, 2, 'exit code');
-});
+// Note: the default live-server path (serve + SSE live-reload) is exercised by
+// the standalone async integration test in tests/test-review-serve.js — the
+// sync scenario harness here can't drive a long-running server.
 
 summary();

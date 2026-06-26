@@ -2,7 +2,7 @@
 
 Convert HTML animations to video files. Drop a file in a folder, run `h2v export`, get a video. Defaults to 4K 60fps MP4 (10-bit HEVC); every output parameter is configurable.
 
-The companion `h2v review` command builds a single self-contained HTML page that embeds every animation at the given paths, for side-by-side preview in a browser.
+The companion `h2v review` command serves a live preview of every animation at the given paths — open it in a browser (or VS Code's built-in Simple Browser) and it auto-reloads as you edit. `--no-serve` falls back to a static page; `--out` writes a portable self-contained file.
 
 ## Install
 
@@ -41,8 +41,8 @@ h2v export --paste                        # paste HTML into the terminal,
 pbpaste | h2v export --paste              # macOS clipboard direct
 xclip -o | h2v export --paste             # Linux clipboard direct
 
-h2v review ./anims                        # browser preview of every animation
-h2v review bundle.html --out review.html  # save the preview to a real path
+h2v review ./anims                        # live preview of every animation (auto-reloads on edits)
+h2v review bundle.html --out review.html  # save a portable self-contained preview
 h2v review --paste                        # paste HTML, preview without saving a file
 ```
 
