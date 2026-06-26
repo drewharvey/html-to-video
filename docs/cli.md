@@ -236,6 +236,8 @@ REVIEW FLAGS
                       (no server) and exit. Inlines each animation
                       (srcdoc) so the saved file can be moved or shared.
   --no-open           Don't auto-open the browser; just print the URL/path.
+                      (With --no-serve this also keeps the tmpfile, since
+                      you asked for the path rather than a preview.)
   --keep              (--no-serve only) Don't delete the tmpfile on exit.
   --paste             Read HTML from the terminal (or piped stdin) instead
                       of from a file path. Same semantics as the export
@@ -338,7 +340,7 @@ Examples:
 
 ```
 h2v export hero.html                                    # default: 10-bit HEVC in .mp4
-h2v export hero.html --codec libx264                    # 8-bit h264 in .mp4 (max compatibility)
+h2v export hero.html --codec libx264                    # 8-bit h264 in .mp4 (max device/web reach)
 h2v export hero.html --codec libx265 --container mov    # 10-bit HEVC in .mov
 h2v export hero.html --codec libvpx-vp9 --crf 30        # web-sized .webm
 h2v export hero.html --codec prores_ks                  # editing master in .mov

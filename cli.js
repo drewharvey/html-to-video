@@ -389,6 +389,8 @@ REVIEW FLAGS
                       (no server) and exit. Inlines each animation
                       (srcdoc) so the saved file can be moved or shared.
   --no-open           Don't auto-open the browser; just print the URL/path.
+                      (With --no-serve this also keeps the tmpfile, since
+                      you asked for the path rather than a preview.)
   --keep              (--no-serve only) Don't delete the tmpfile on exit.
   --paste             Read HTML from the terminal (or piped stdin) instead
                       of from a file path. Same semantics as the export
@@ -2678,7 +2680,7 @@ async function runReview(paths, opts) {
       started = await startReviewServer({ buildPage, host: opts.host, port: opts.port });
     } catch (err) {
       const why = err && err.code === 'EADDRINUSE'
-        ? `port ${opts.port} is already in use`
+        ? `port ${opts.port || '(auto)'} is already in use`
         : (err && err.message) || String(err);
       console.warn(`warning: could not start the review server (${why}); falling back to a static page.`);
     }
@@ -2727,6 +2729,13 @@ async function serveReview(started, paths, cwd, opts, count) {
   const url = `http://${displayHost}:${port}/`;
 
   console.log(`Review server (${reviewCount(count)}): ${url}`);
+
+  // A post-listen error (rare for a loopback server) shouldn't crash with an
+  // unhandled 'error' event — surface it and exit cleanly.
+  server.on('error', (err) => {
+    console.error(`\nreview server error: ${err && err.message ? err.message : err}`);
+    process.exit(1);
+  });
 
   // Watch the inputs; reload connected clients (debounced) on any change.
   const watchers = startReviewWatch(paths, cwd, debounce(broadcast, 120));
