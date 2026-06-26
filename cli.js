@@ -371,8 +371,8 @@ REVIEW FLAGS
   By default, review starts a tiny local server and opens the page in
   your browser; it re-reads your animations on each request and live-
   reloads on edits (no manual refresh). Works in any browser and in VS
-  Code's built-in Simple Browser (run "Simple Browser: Show" and paste
-  the URL) — no extension required.
+  Code's built-in Simple Browser (⌘/Ctrl-click the printed URL in the
+  VS Code terminal) — no extension required.
   --no-serve          Don't run a server. Write a static page to a tmpfile
                       and open it via file:// (the pre-server behavior:
                       edits need a manual browser refresh). This is also
@@ -2747,7 +2747,7 @@ async function serveReview(started, paths, cwd, opts, count) {
     });
   }
   if (process.env.TERM_PROGRAM === 'vscode') {
-    console.log('In VS Code: run "Simple Browser: Show" (Cmd+Shift+P) and paste the URL to preview in a tab — no extension needed.');
+    console.log('In VS Code: ⌘-click (Ctrl-click) the URL above to open it in the built-in Simple Browser — no extension needed.');
   }
   console.log('Watching for changes — edits reload automatically. Press Ctrl-C to stop.');
 

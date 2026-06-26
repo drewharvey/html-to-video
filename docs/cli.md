@@ -218,8 +218,8 @@ REVIEW FLAGS
   By default, review starts a tiny local server and opens the page in
   your browser; it re-reads your animations on each request and live-
   reloads on edits (no manual refresh). Works in any browser and in VS
-  Code's built-in Simple Browser (run "Simple Browser: Show" and paste
-  the URL) — no extension required.
+  Code's built-in Simple Browser (⌘/Ctrl-click the printed URL in the
+  VS Code terminal) — no extension required.
   --no-serve          Don't run a server. Write a static page to a tmpfile
                       and open it via file:// (the pre-server behavior:
                       edits need a manual browser refresh). This is also
@@ -554,7 +554,7 @@ By default, `h2v review` starts a tiny local HTTP server (no extra dependencies 
 3. Re-read the animations from disk on **every request** and inject a tiny `EventSource` client. A file watcher pushes a reload over Server-Sent Events whenever a watched file changes — so **editing an animation refreshes the page automatically**, no manual ⌘R. Adding/removing animations is picked up too (the page re-discovers per request).
 4. Print `Press Ctrl-C to stop` and wait. The server's lifetime is the process's; Ctrl-C closes it. There's no tmpfile to clean up — the page is served from memory.
 
-This works in any browser, on a phone via `--lan`, and inside VS Code's built-in **Simple Browser** (run "Simple Browser: Show" from the command palette and paste the URL) — no extension required. When run from a VS Code terminal, h2v prints that hint automatically.
+This works in any browser, on a phone via `--lan`, and inside VS Code's built-in **Simple Browser**: just **⌘-click (Ctrl-click) the printed URL** in the VS Code terminal and it opens in a Simple Browser tab — no extension required. (You can also run "Simple Browser: Show" from the command palette and paste the URL.) When run from a VS Code terminal, h2v prints this hint automatically.
 
 ### `--no-serve` (static `file://` page)
 
