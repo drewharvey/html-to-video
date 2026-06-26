@@ -106,6 +106,7 @@ cli.js                          # one file, only dep is puppeteer
 package.json                    # bin: { h2v, html-to-video } → cli.js;
                                 # docs:sync / docs:check scripts
 README.md                       # slim human-facing landing page + doc map
+BACKLOG.md                      # known issues + deferred work (see below)
 docs/                           # split docs (see "Documentation layout" below)
   authoring.md                  # HTML-side contract: meta tags, themes,
                                 # bundle markers, recording hooks
@@ -131,6 +132,7 @@ The README is the human-facing landing page (and the file most agents parse firs
 - **`docs/cli.md`** — operator reference. Contains the auto-synced `h2v --help` block (between `<!-- BEGIN: auto-generated ... -->` markers) plus deeper sections on quality presets, codec/container details, parallel recording, output paths, etc.
 - **`docs/internals.md`** — how recording works under the hood. Time-slowdown trick, capture format choice, parallel job model. Cross-references this file for the failed-approaches table and design invariants.
 - **`CLAUDE.md`** (this file) — design invariants, failed approaches, "things that aren't broken." Required reading before modifying `cli.js`.
+- **`BACKLOG.md`** — known issues and deferred work. **Track deferred work here**, not in scattered TODOs or chat-only notes: when a task is identified but not done now, add it as a new section at the top with a `**Noted:** YYYY-MM-DD` line and enough investigation notes for a cold start; remove the entry (or replace it with a commit/PR reference) once resolved. Consult it when picking up new work.
 
 ## --help / docs/cli.md sync workflow
 
