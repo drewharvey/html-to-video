@@ -353,6 +353,46 @@ scenario('single-file header omits the duplicate source span', ({ tmp }) => {
     'expected the source-vs-name de-duplication guard');
 });
 
+// ---------------------------------------------------------------------------
+// 14. Global theme switcher: when ≥2 themes are declared by EVERY animation,
+//     the review page renders one switcher that drives all iframes at once.
+// ---------------------------------------------------------------------------
+scenario('global theme switcher: shown when all animations share ≥2 themes', ({ tmp }) => {
+  const meta = '<meta name="h2v-duration" content="1s"><meta name="h2v-themes" content="dark,light">';
+  fs.writeFileSync(path.join(tmp, 'a.html'), `<html><head>${meta}</head><body>a</body></html>`);
+  fs.writeFileSync(path.join(tmp, 'b.html'), `<html><head>${meta}</head><body>b</body></html>`);
+  const out = path.join(tmp, 'review.html');
+  const r = runH2v(['review', '.', '--no-open', '--out', out], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const html = fs.readFileSync(out, 'utf-8');
+  assert(/id="themeSwitch"/.test(html), 'expected the global theme switcher markup');
+  assert(/data-theme-name="dark"/.test(html) && /data-theme-name="light"/.test(html),
+    'expected dark + light buttons');
+  assert(/function applyGlobalTheme/.test(html), 'expected the fan-out function');
+
+  const anims = extractAnimations(html);
+  assert(Array.isArray(anims[0].themes) && anims[0].themes[0] === 'dark',
+    `each entry must carry declared themes (first = default); got ${JSON.stringify(anims[0].themes)}`);
+});
+
+// ---------------------------------------------------------------------------
+// 15. The switcher only offers the INTERSECTION and needs ≥2: an animation
+//     declaring only "dark" alongside one declaring "dark,light" leaves just
+//     [dark] in common → no switcher.
+// ---------------------------------------------------------------------------
+scenario('global theme switcher: hidden without ≥2 themes common to all', ({ tmp }) => {
+  fs.writeFileSync(path.join(tmp, 'a.html'),
+    '<html><head><meta name="h2v-duration" content="1s"><meta name="h2v-themes" content="dark,light"></head><body>a</body></html>');
+  fs.writeFileSync(path.join(tmp, 'b.html'),
+    '<html><head><meta name="h2v-duration" content="1s"><meta name="h2v-themes" content="dark"></head><body>b</body></html>');
+  const out = path.join(tmp, 'review.html');
+  const r = runH2v(['review', '.', '--no-open', '--out', out], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+  assert(!/id="themeSwitch"/.test(fs.readFileSync(out, 'utf-8')),
+    'no switcher when fewer than 2 themes are common to every animation');
+});
+
 // Note: the default live-server path (serve + SSE live-reload) is exercised by
 // the standalone async integration test in tests/test-review-serve.js — the
 // sync scenario harness here can't drive a long-running server.

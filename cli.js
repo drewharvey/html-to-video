@@ -2023,6 +2023,9 @@ function buildReviewHtml(animations, { inline, liveReload }) {
       title: a.title,
       source: a.source,
       viewport: a.viewport,
+      // Declared themes (first = the animation's default = no data-theme).
+      // The global theme switcher uses [0] to decide set-vs-remove per iframe.
+      themes: a.themes || [],
     };
     if (!inline && a.filePath) {
       return { ...base, src: pathToFileURL(a.filePath).href };
@@ -2032,6 +2035,26 @@ function buildReviewHtml(animations, { inline, liveReload }) {
 
   const count = animations.length;
   const countLabel = `${count} animation${count === 1 ? '' : 's'}`;
+
+  // Global theme switcher: the themes shared by EVERY animation (intersection
+  // of each one's declared h2v-themes, order from the first animation). Only
+  // shown when ≥2 are common — you need at least two to switch between. Names
+  // are constrained to the documented THEME_NAME_RE so they're safe to inline.
+  const commonThemes = (
+    animations.map((a) => a.themes || []).reduce(
+      (acc, list) => (acc === null ? list.slice() : acc.filter((t) => list.includes(t))),
+      null,
+    ) || []
+  ).filter((t) => THEME_NAME_RE.test(t));
+  const showThemeSwitcher = commonThemes.length >= 2;
+  const themeSwitcherMarkup = showThemeSwitcher
+    ? `<div class="theme-switch" id="themeSwitch">
+      <span class="label">theme</span>
+      <span class="seg">${commonThemes
+        .map((t, i) => `<button type="button" data-theme-name="${t}"${i === 0 ? ' class="active"' : ''}>${t}</button>`)
+        .join('')}</span>
+    </div>`
+    : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2079,6 +2102,26 @@ button.ctl {
   font-family: monospace;
 }
 button.ctl:hover { background: var(--btn-hover); }
+.page-controls { display: flex; align-items: center; gap: 12px; }
+/* Global theme switcher — segmented control; sets the theme on every
+   animation iframe at once (themes shared by all animations). */
+.theme-switch { display: inline-flex; align-items: center; gap: 7px; }
+.theme-switch .label {
+  font-size: 11px; color: var(--muted); font-family: monospace;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.theme-switch .seg {
+  display: inline-flex; border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.theme-switch .seg button {
+  padding: 7px 12px; background: var(--btn-bg); border: 0;
+  border-left: 1px solid var(--border); color: var(--text);
+  font-size: 12px; cursor: pointer; font-family: monospace;
+}
+.theme-switch .seg button:first-child { border-left: 0; }
+.theme-switch .seg button:hover { background: var(--btn-hover); }
+.theme-switch .seg button.active { background: var(--text); color: var(--bg); }
 /* Icons are inlined Lucide SVGs (https://lucide.dev, ISC licensed) —
    copied in, not a dependency, so the review page stays self-contained.
    They use stroke="currentColor", so they take the button's text color. */
@@ -2167,7 +2210,10 @@ main {
 <body>
 <header class="page-header">
   <h1>h2v review <small>${countLabel}</small></h1>
-  <button class="ctl" id="resetAll"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset all</span></button>
+  <div class="page-controls">
+    ${themeSwitcherMarkup}
+    <button class="ctl" id="resetAll"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset all</span></button>
+  </div>
 </header>
 <main id="cards"></main>
 <script>
@@ -2329,10 +2375,44 @@ ANIMATIONS.forEach((a) => {
   fitObserver.observe(stage);
 });
 
+// Global theme switcher: set data-theme on every animation iframe at once.
+// For each iframe, remove the attribute when the chosen theme is that
+// animation's own default (themes[0]) — its default styles live on bare
+// :root, not :root[data-theme="..."] — otherwise set it. contentDocument is
+// reachable for srcdoc iframes (serve / bundle); guarded for the file:// case.
+const themeSwitch = document.getElementById('themeSwitch');
+function applyGlobalTheme(theme) {
+  document.querySelectorAll('#cards .card').forEach((card, i) => {
+    const a = ANIMATIONS[i];
+    const iframe = card.querySelector('iframe');
+    let doc = null;
+    try { doc = iframe.contentDocument; } catch (e) { doc = null; }
+    if (!doc || !doc.documentElement) return;
+    if (a.themes && a.themes[0] === theme) doc.documentElement.removeAttribute('data-theme');
+    else doc.documentElement.setAttribute('data-theme', theme);
+  });
+}
+function setActiveTheme(btn) {
+  if (!themeSwitch) return;
+  themeSwitch.querySelectorAll('button[data-theme-name]')
+    .forEach((b) => b.classList.toggle('active', b === btn));
+}
+if (themeSwitch) {
+  themeSwitch.querySelectorAll('button[data-theme-name]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyGlobalTheme(btn.getAttribute('data-theme-name'));
+      setActiveTheme(btn);
+    });
+  });
+}
+
 document.getElementById('resetAll').addEventListener('click', () => {
   document.querySelectorAll('.card').forEach((card, i) => {
     reload(card.querySelector('iframe'), ANIMATIONS[i]);
   });
+  // Reloading re-renders each animation at its own default theme, so reset the
+  // global switcher's highlight to the first (default) theme to match.
+  if (themeSwitch) setActiveTheme(themeSwitch.querySelector('button[data-theme-name]'));
 });
 </script>${liveReload ? `
 <script>
@@ -2595,6 +2675,9 @@ function buildReviewAnimations(inputs) {
           source: `${inputBase}/${frame.id}`,
           html: frame.html,
           viewport: frame.viewport || DEFAULT_VIEWPORT,
+          // Declared themes (first = default = no data-theme attribute).
+          // Drives the global theme switcher in buildReviewHtml.
+          themes: frame.declaredThemes || [],
           // Bundle frames are slices of a parent file with no individual
           // path on disk. In live mode they fall back to srcdoc inlining.
           filePath: null,
@@ -2607,6 +2690,7 @@ function buildReviewAnimations(inputs) {
         source: inputBase,
         html: text,
         viewport: extractViewport(text) || DEFAULT_VIEWPORT,
+        themes: extractDeclaredThemes(text),
         // Absolute path so the review HTML (typically in os.tmpdir())
         // can address the source file via a file:// URL.
         filePath: path.resolve(inputPath),

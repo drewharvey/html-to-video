@@ -577,6 +577,8 @@ Bundle frames (animations inside a single `ANIMATION_START` / `ANIMATION_END`-ma
 - **Full screen** — opens that single animation full screen via the browser Fullscreen API, scaled to fill the display and letterboxed on black. Press `Esc` to exit.
 - **Actual size** — opens the animation at its native 1:1 resolution in a new browser tab (the `↗` marks the new tab). The animation is embedded in a scrollable wrapper, so if it's larger than the window you can scroll to see all of it — including animations whose own `<body>` sets `overflow: hidden`.
 
+**Global theme switcher.** When *every* animation on the page declares the same set of two or more themes (via `<meta name="h2v-themes">` / bundle `themes=`), the header shows a segmented theme control. Clicking a theme sets `data-theme` on all animation iframes at once (removing it for whichever is each animation's declared default), so you can flip the whole page between e.g. dark and light in one action. It offers only the themes common to all animations; with fewer than two in common it's hidden. Individual animations can still be switched via their own in-page controls afterward.
+
 The `data-h2v-recording` and `data-h2v-hide` hooks are **not** applied during review — controls in the embedded animations stay visible and interactive.
 
 ---
