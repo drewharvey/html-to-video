@@ -141,4 +141,33 @@ scenario('safeJsonForScript: escapes </script> inside embedded values', () => {
   assertEq(JSON.parse(out).html, '<div></div><script>x</script>', 'value round-trips');
 });
 
+// ===========================================================================
+// groupLabel / sortGroupedInputs — review's recursive directory grouping.
+// ===========================================================================
+scenario('groupLabel: directory names humanize into headings', () => {
+  assertEq(h2v.groupLabel('title-cards'), 'Title Cards', 'dashes → words, title case');
+  assertEq(h2v.groupLabel('intro_clips'), 'Intro Clips', 'underscores too');
+  assertEq(h2v.groupLabel('demos/nested-bits'), 'Demos / Nested Bits', 'nested joined with " / "');
+  assertEq(h2v.groupLabel('demos'), 'Demos', 'single word');
+  assertEq(h2v.groupLabel(''), '', 'ungrouped → empty label (no heading)');
+});
+
+scenario('sortGroupedInputs: ungrouped first, then group, then filename', () => {
+  const sorted = h2v.sortGroupedInputs([
+    { path: '/a/title-cards/b.html', group: 'title-cards' },
+    { path: '/a/demos/z.html', group: 'demos' },
+    { path: '/a/one.html', group: '' },
+    { path: '/a/demos/a.html', group: 'demos' },
+    { path: '/a/demos/nested/n.html', group: 'demos/nested' },
+  ]);
+  assertEq(
+    sorted.map((e) => e.group + ':' + e.path.split('/').pop()),
+    [':one.html', 'demos:a.html', 'demos:z.html', 'demos/nested:n.html', 'title-cards:b.html'],
+    'ordering'
+  );
+  // Contiguity per group is what lets buildReviewHtml emit one heading each.
+  const groups = sorted.map((e) => e.group);
+  assertEq(new Set(groups).size, groups.filter((g, i) => g !== groups[i - 1]).length, 'each group contiguous');
+});
+
 summary();

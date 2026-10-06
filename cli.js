@@ -146,6 +146,11 @@ const QUALITY_PRESET_NAMES = Object.keys(QUALITY_PRESETS);
 
 const SKIP_FILENAMES = new Set(['review.html']);
 
+// Directories never descended into during a recursive scan (`h2v review`).
+// They hold generated or vendored HTML that is never an input animation —
+// walking them is slow and the results are noise on the review page.
+const SKIP_DIRNAMES = new Set(['node_modules', 'output', 'captures']);
+
 // Bundle marker syntax: ANIMATION_START / ANIMATION_END.
 // We also accept the older FRAME_START / FRAME_END for backward
 // compatibility with bundles authored before the rename.
@@ -184,9 +189,11 @@ USAGE
 
 ARGUMENTS
   paths     One or more HTML files or directories. With no paths, every
-            *.html in the current directory is processed (non-recursive).
-            Files inside an explicitly named directory are filtered with
-            the same rules: dotfiles and review.html are skipped.
+            *.html in the current directory is processed. Files inside an
+            explicitly named directory are filtered with the same rules:
+            dotfiles and review.html are skipped. export and bundle scan
+            the top level only; review also scans subdirectories and
+            groups the page by directory (see --no-recursive).
 
 EXPORT FLAGS
   --duration <Ns>     Capture duration. When passed explicitly, overrides
@@ -373,6 +380,11 @@ REVIEW FLAGS
   reloads on edits (no manual refresh). Works in any browser and in VS
   Code's built-in Simple Browser (⌘/Ctrl-click the printed URL in the
   VS Code terminal) — no extension required.
+  --no-recursive      Don't scan subdirectories. By default review walks
+                      the directories it is given (and the current
+                      directory) recursively, skipping dotted dirs,
+                      node_modules, output and captures, and groups the
+                      page under a heading per subdirectory.
   --no-serve          Don't run a server. Write a static page to a tmpfile
                       and open it via file:// (the pre-server behavior:
                       edits need a manual browser refresh). This is also
@@ -505,6 +517,10 @@ function parseArgs(argv) {
     // review serve mode (default on): h2v serves the review page over HTTP and
     // live-reloads it on edits. --no-serve reverts to the static file:// page.
     serve: true,
+    // review discovery: recurse into subdirectories and group the page by
+    // directory (--no-recursive restores the flat, top-level-only scan).
+    // Ignored by export/bundle, which are always non-recursive.
+    recursive: true,
     port: null,
     host: '127.0.0.1',
   };
@@ -582,6 +598,8 @@ function parseArgs(argv) {
     else if (a === '--paste') opts.paste = true;
     else if (a === '--keep') opts.keep = true;
     else if (a === '--no-serve') opts.serve = false;
+    else if (a === '--recursive') opts.recursive = true;
+    else if (a === '--no-recursive') opts.recursive = false;
     else if (a === '--port') opts.port = parsePositiveInt(requireValue('--port'), '--port');
     else if (a === '--host') opts.host = requireValue('--host');
     else if (a === '--lan') opts.host = '0.0.0.0';
@@ -872,12 +890,48 @@ function parseThemeFlag(s) {
 // Input discovery
 // =========================================================================
 
-function discoverInputs(paths, cwd) {
-  const inputs = new Set();
+// Expand the positional path arguments into a flat, sorted list of absolute
+// HTML file paths. `recursive` (review only) descends into subdirectories.
+function discoverInputs(paths, cwd, { recursive = false } = {}) {
+  return discoverGroupedInputs(paths, cwd, { recursive }).map((e) => e.path);
+}
+
+// Same discovery as discoverInputs, but each entry carries the group it
+// belongs to: the directory path it was found under, relative to the root
+// that produced it (`''` for a file sitting directly at that root, which is
+// what every non-recursive run yields). `h2v review` turns a non-empty group
+// into a heading on the page; `h2v export` ignores groups entirely.
+//
+// Roots: cwd when no paths are given, otherwise each directory argument.
+// Explicitly named *files* are always ungrouped — the user pointed at them
+// one by one, so there is no directory structure to mirror. When several
+// directories are passed, each one's own name becomes the first group
+// segment, so the page separates them instead of merging their files.
+//
+// The result is sorted ungrouped-first, then by group, then by filename, so
+// every grouped animation of a group is contiguous (buildReviewHtml relies
+// on that to emit one heading per group).
+function discoverGroupedInputs(paths, cwd, { recursive = false } = {}) {
+  const byPath = new Map();
+  const add = (entry) => {
+    // First discovery of a path wins: an explicitly named file keeps its
+    // ungrouped placement even if a later directory argument also covers it.
+    if (!byPath.has(entry.path)) byPath.set(entry.path, entry);
+  };
+
   if (paths.length === 0) {
-    listHtmlInDir(cwd).forEach((p) => inputs.add(p));
-    return [...inputs].sort();
+    listHtmlInDir(cwd, { recursive }).forEach(add);
+    return sortGroupedInputs([...byPath.values()]);
   }
+
+  const dirArgs = paths.filter((arg) => {
+    try { return fs.statSync(path.resolve(cwd, arg)).isDirectory(); }
+    catch { return false; }
+  });
+  // With a single directory argument that directory IS the root, so its own
+  // name is not a heading (a flat directory reviews exactly as it does now).
+  const prefixWithDirName = dirArgs.length > 1;
+
   for (const arg of paths) {
     const abs = path.resolve(cwd, arg);
     let stat;
@@ -892,33 +946,99 @@ function discoverInputs(paths, cwd) {
         console.error(`error: not an HTML file: ${arg}`);
         process.exit(1);
       }
-      inputs.add(abs);
+      add({ path: abs, group: '' });
     } else if (stat.isDirectory()) {
-      listHtmlInDir(abs).forEach((p) => inputs.add(p));
+      const prefix = prefixWithDirName ? path.basename(abs) : '';
+      for (const entry of listHtmlInDir(abs, { recursive })) {
+        add({ path: entry.path, group: joinGroup(prefix, entry.group) });
+      }
     } else {
       console.error(`error: not a file or directory: ${arg}`);
       process.exit(1);
     }
   }
-  return [...inputs].sort();
+  return sortGroupedInputs([...byPath.values()]);
 }
 
-function listHtmlInDir(dir) {
-  const out = [];
-  for (const entry of fs.readdirSync(dir)) {
-    if (entry.startsWith('.')) continue;
-    if (SKIP_FILENAMES.has(entry)) continue;
-    if (!entry.toLowerCase().endsWith('.html')) continue;
-    const abs = path.resolve(dir, entry);
-    let stat;
-    try {
-      stat = fs.statSync(abs);
-    } catch {
-      continue;
+function joinGroup(...segments) {
+  return segments.filter(Boolean).join('/');
+}
+
+// Ungrouped entries first (files at the root), then groups alphabetically,
+// then files alphabetically within a group.
+function sortGroupedInputs(entries) {
+  return entries.sort((a, b) => {
+    if (a.group !== b.group) {
+      if (a.group === '') return -1;
+      if (b.group === '') return 1;
+      return a.group < b.group ? -1 : 1;
     }
-    if (stat.isFile()) out.push(abs);
-  }
+    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  });
+}
+
+// List the HTML files under `dir` as { path, group } entries, where group is
+// the containing directory relative to `dir`. Non-recursive by default (the
+// long-standing export behavior); recursive descends into subdirectories,
+// skipping dotted ones and the generated/vendored dirs in SKIP_DIRNAMES.
+function listHtmlInDir(dir, { recursive = false } = {}) {
+  const out = [];
+  const walk = (absDir, group) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const abs = path.resolve(absDir, entry.name);
+      // Resolve symlinks (and anything else readdir can't classify) with a
+      // stat, same as the pre-recursion code did.
+      let isDir = entry.isDirectory();
+      let isFile = entry.isFile();
+      if (!isDir && !isFile) {
+        try {
+          const st = fs.statSync(abs);
+          isDir = st.isDirectory();
+          isFile = st.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
+        if (!recursive) continue;
+        if (SKIP_DIRNAMES.has(entry.name)) continue;
+        walk(abs, joinGroup(group, entry.name));
+        continue;
+      }
+      if (!isFile) continue;
+      if (SKIP_FILENAMES.has(entry.name)) continue;
+      if (!entry.name.toLowerCase().endsWith('.html')) continue;
+      out.push({ path: abs, group });
+    }
+  };
+  walk(path.resolve(dir), '');
   return out;
+}
+
+// Human-readable heading for a group path: each segment title-cased, nested
+// segments joined with " / ". e.g. "title-cards" → "Title Cards",
+// "demos/intro_clips" → "Demos / Intro Clips".
+function groupLabel(group) {
+  return group
+    .split('/')
+    .filter(Boolean)
+    .map((seg) =>
+      seg
+        .replace(/[-_]+/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .split(' ')
+        .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+        .join(' ')
+    )
+    .join(' / ');
 }
 
 // =========================================================================
@@ -2022,6 +2142,11 @@ function buildReviewHtml(animations, { inline, liveReload }) {
       id: a.id,
       title: a.title,
       source: a.source,
+      // Directory this animation was discovered under, relative to its
+      // discovery root ('' = top level). The card loop emits a heading
+      // whenever it changes; '' never gets one.
+      group: a.group || '',
+      groupLabel: groupLabel(a.group || ''),
       viewport: a.viewport,
       // Declared themes (first = the animation's default = no data-theme).
       // The global theme switcher uses [0] to decide set-vs-remove per iframe.
@@ -2126,10 +2251,66 @@ button.ctl:hover { background: var(--btn-hover); }
    copied in, not a dependency, so the review page stays self-contained.
    They use stroke="currentColor", so they take the button's text color. */
 button.ctl svg { width: 14px; height: 14px; display: block; }
-main {
-  max-width: 1100px; margin: 0 auto; padding: 24px 20px 80px;
-  display: grid; gap: 24px;
+/* Two-column shell: sticky table of contents on the left, cards on the
+   right. The grid collapses to a single column (TOC hidden) on narrow
+   viewports — the nav is a convenience for long pages, not a requirement
+   for reading them. */
+.layout {
+  max-width: 1360px; margin: 0 auto; padding: 24px 20px 80px;
+  display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px;
+  align-items: start;
 }
+main {
+  min-width: 0; display: grid; gap: 24px;
+}
+/* --header-h is the sticky page header's height, measured at runtime, so
+   the TOC parks just under it instead of behind it. */
+.toc {
+  position: sticky; top: calc(var(--header-h, 56px) + 16px);
+  max-height: calc(100vh - var(--header-h, 56px) - 32px);
+  overflow-y: auto; overscroll-behavior: contain;
+  font-family: monospace; font-size: 12px;
+  border-right: 1px solid var(--border); padding-right: 12px;
+}
+.toc ul { list-style: none; margin: 0; padding: 0; }
+.toc .toc-group {
+  margin: 14px 0 6px; font-size: 11px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.toc li:first-child .toc-group { margin-top: 0; }
+.toc a {
+  display: block; padding: 5px 8px; border-radius: 6px;
+  color: var(--muted); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-left: 2px solid transparent;
+}
+.toc a:hover { background: var(--btn-bg); color: var(--text); }
+/* Current card, per the scroll-spy IntersectionObserver below. */
+.toc a.active {
+  color: var(--text); font-weight: 600;
+  border-left-color: var(--text); background: var(--btn-bg);
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .toc { display: none; }
+}
+/* Anchor targets land below the sticky header rather than under it. */
+.card { scroll-margin-top: calc(var(--header-h, 56px) + 16px); }
+.group-heading { scroll-margin-top: calc(var(--header-h, 56px) + 16px); }
+/* Directory heading (recursive review). Sits between cards in the same
+   grid flow; the first one drops its top margin so it doesn't double the
+   grid gap under the page header. */
+.group-heading {
+  margin: 16px 0 -6px; font-size: 13px; font-weight: 600;
+  font-family: monospace; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  display: flex; align-items: center; gap: 12px;
+}
+.group-heading:first-child { margin-top: 0; }
+.group-heading::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+.group-heading .count { text-transform: none; letter-spacing: 0; }
 .card {
   background: var(--card-bg); border: 1px solid var(--border);
   border-radius: 12px; overflow: hidden;
@@ -2215,7 +2396,10 @@ main {
     <button class="ctl" id="resetAll"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset all</span></button>
   </div>
 </header>
-<main id="cards"></main>
+<div class="layout">
+  <nav class="toc" id="toc" aria-label="Animations"></nav>
+  <main id="cards"></main>
+</div>
 <script>
 const ANIMATIONS = ${safeJsonForScript(serialized)};
 
@@ -2240,6 +2424,22 @@ function reload(iframe, a) {
 }
 
 const main = document.getElementById('cards');
+// Sticky left-hand table of contents: one entry per animation, grouped by
+// directory, built in the same pass as the cards so the two stay in sync.
+const toc = document.getElementById('toc');
+const tocList = document.createElement('ul');
+toc.appendChild(tocList);
+const tocLinks = [];
+
+// The page header is sticky, so anchors and the TOC's own top offset have
+// to clear it. Measure it instead of hardcoding — the header grows when
+// the theme switcher is present or the window is narrow.
+function syncHeaderHeight() {
+  const h = document.querySelector('.page-header');
+  if (h) document.documentElement.style.setProperty('--header-h', h.offsetHeight + 'px');
+}
+syncHeaderHeight();
+window.addEventListener('resize', syncHeaderHeight);
 
 // Inlined Lucide icons (https://lucide.dev, ISC licensed) — copied in, not
 // a dependency. stroke="currentColor" makes them inherit the button color.
@@ -2317,7 +2517,37 @@ function openNative(a) {
   });
 });
 
-ANIMATIONS.forEach((a) => {
+// Emit a heading each time the group changes. ANIMATIONS is pre-sorted so
+// every group's animations are contiguous (see sortGroupedInputs), and
+// ungrouped ones come first — so this produces one heading per directory.
+// Headings are not .card elements, so the index-aligned
+// querySelectorAll('#cards .card') lookups below stay in step with
+// ANIMATIONS.
+let currentGroup = null;
+ANIMATIONS.forEach((a, i) => {
+  const group = a.group || '';
+  if (group !== currentGroup) {
+    currentGroup = group;
+    if (group) {
+      const n = ANIMATIONS.filter((x) => (x.group || '') === group).length;
+      const heading = document.createElement('h2');
+      heading.className = 'group-heading';
+      const label = document.createElement('span');
+      label.textContent = a.groupLabel || group;
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = n + ' animation' + (n === 1 ? '' : 's');
+      heading.append(label, count);
+      heading.id = 'group-' + i;
+      main.appendChild(heading);
+      const groupItem = document.createElement('li');
+      const groupLabelEl = document.createElement('div');
+      groupLabelEl.className = 'toc-group';
+      groupLabelEl.textContent = a.groupLabel || group;
+      groupItem.appendChild(groupLabelEl);
+      tocList.appendChild(groupItem);
+    }
+  }
   const card = document.createElement('article');
   card.className = 'card';
   const head = document.createElement('div');
@@ -2371,9 +2601,69 @@ ANIMATIONS.forEach((a) => {
   if (source) head.append(source);
   head.append(dims, actions);
   card.append(head, stage);
+  card.id = 'anim-' + i;
   main.appendChild(card);
   fitObserver.observe(stage);
+
+  const tocItem = document.createElement('li');
+  const link = document.createElement('a');
+  link.href = '#' + card.id;
+  link.textContent = label;
+  link.title = a.source || label;
+  tocItem.appendChild(link);
+  tocList.appendChild(tocItem);
+  tocLinks.push(link);
 });
+
+// Scroll-spy: highlight the TOC entry for the card the reader is on — the
+// last card whose top edge has passed the "reading line" just under the
+// sticky header (or the first card, before any has). An
+// IntersectionObserver is the usual tool here, but review cards are often
+// a full viewport tall, so several intersect at once and "topmost
+// intersecting" lags a card behind; this reads positions directly and is
+// unambiguous. Work is rAF-coalesced, so a scroll costs one pass.
+if (tocLinks.length) {
+  const cards = [...document.querySelectorAll('#cards .card')];
+  let activeIdx = -1;
+  let queued = false;
+
+  function syncSpy() {
+    queued = false;
+    const line = (parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--header-h')
+    ) || 56) + 24;
+    let idx = 0;
+    for (let i = 0; i < cards.length; i++) {
+      if (cards[i].getBoundingClientRect().top <= line) idx = i;
+      else break;
+    }
+    // At the very bottom of the page the last card may never reach the
+    // line (a short final card under a tall one), so pin it there.
+    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 2) {
+      idx = cards.length - 1;
+    }
+    if (idx === activeIdx) return;
+    activeIdx = idx;
+    tocLinks.forEach((l, i) => l.classList.toggle('active', i === idx));
+    // Keep the highlighted entry in view when the TOC itself scrolls.
+    const active = tocLinks[idx];
+    if (active && toc.scrollHeight > toc.clientHeight) {
+      const r = active.getBoundingClientRect();
+      const t = toc.getBoundingClientRect();
+      if (r.top < t.top || r.bottom > t.bottom) active.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function queueSpy() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(syncSpy);
+  }
+
+  window.addEventListener('scroll', queueSpy, { passive: true });
+  window.addEventListener('resize', queueSpy);
+  syncSpy();
+}
 
 // Global theme switcher: set data-theme on every animation iframe at once.
 // For each iframe, remove the attribute when the chosen theme is that
@@ -2470,12 +2760,23 @@ function debounce(fn, ms) {
 // structural changes too, since it re-discovers per request). Returns the
 // watchers so the caller can close them on shutdown. Unwatchable paths are
 // skipped silently — a missing watcher just means no auto-reload for that path.
-function startReviewWatch(paths, cwd, onChange) {
+function startReviewWatch(paths, cwd, onChange, { recursive = false } = {}) {
   const targets = paths.length ? paths : [cwd];
   const watchers = [];
   for (const p of targets) {
+    const abs = path.resolve(cwd, p);
     try {
-      watchers.push(fs.watch(path.resolve(cwd, p), { persistent: true }, onChange));
+      // Recursive review discovers animations in subdirectories, so the
+      // watch has to reach them too. fs.watch's recursive option is
+      // supported on macOS and Windows everywhere, and on Linux from Node
+      // 20 — fall back to a top-level watch where it throws, which still
+      // catches edits to the directly-listed files.
+      try {
+        watchers.push(fs.watch(abs, { persistent: true, recursive }, onChange));
+      } catch (err) {
+        if (!recursive) throw err;
+        watchers.push(fs.watch(abs, { persistent: true }, onChange));
+      }
     } catch { /* ignore unwatchable path */ }
   }
   return watchers;
@@ -2655,9 +2956,15 @@ function writePasteToTempFile(html) {
   return { tempDir, tempPath };
 }
 
+// `inputs` are the { path, group } entries from discoverGroupedInputs (a bare
+// path string is accepted too, and treated as ungrouped). Every animation
+// carries its group through to buildReviewHtml, which turns a change of group
+// into a heading; bundle frames inherit the group of the bundle file.
 function buildReviewAnimations(inputs) {
   const animations = [];
-  for (const inputPath of inputs) {
+  for (const input of inputs) {
+    const inputPath = typeof input === 'string' ? input : input.path;
+    const group = (typeof input === 'string' ? '' : input.group) || '';
     const text = fs.readFileSync(inputPath, 'utf8');
     const inputBase = path.basename(inputPath, path.extname(inputPath));
     if (detectMode(text) === 'bundle') {
@@ -2672,6 +2979,7 @@ function buildReviewAnimations(inputs) {
         animations.push({
           id: frame.id,
           title: frame.title,
+          group,
           source: `${inputBase}/${frame.id}`,
           html: frame.html,
           viewport: frame.viewport || DEFAULT_VIEWPORT,
@@ -2687,6 +2995,7 @@ function buildReviewAnimations(inputs) {
       animations.push({
         id: inputBase,
         title: null,
+        group,
         source: inputBase,
         html: text,
         viewport: extractViewport(text) || DEFAULT_VIEWPORT,
@@ -2720,7 +3029,10 @@ async function runReview(paths, opts) {
   }
 
   const cwd = process.cwd();
-  const inputs = discoverInputs(paths, cwd);
+  // Review scans recursively by default (--no-recursive opts out) and groups
+  // what it finds by subdirectory; export and bundle stay non-recursive.
+  const discover = () => discoverGroupedInputs(paths, cwd, { recursive: opts.recursive });
+  const inputs = discover();
 
   if (inputs.length === 0) {
     console.error('error: no .html files matched. Pass paths or run from a directory containing animations.');
@@ -2755,7 +3067,7 @@ async function runReview(paths, opts) {
   // (or a bind failure) drops back to the static file:// page.
   if (opts.serve) {
     const buildPage = () => {
-      const anims = buildReviewAnimations(discoverInputs(paths, cwd));
+      const anims = buildReviewAnimations(discover());
       if (anims.length === 0) throw new Error('no animations to review');
       return buildReviewHtml(anims, { inline: true, liveReload: true });
     };
@@ -2822,7 +3134,7 @@ async function serveReview(started, paths, cwd, opts, count) {
   });
 
   // Watch the inputs; reload connected clients (debounced) on any change.
-  const watchers = startReviewWatch(paths, cwd, debounce(broadcast, 120));
+  const watchers = startReviewWatch(paths, cwd, debounce(broadcast, 120), { recursive: opts.recursive });
 
   if (!opts.skipOpen) {
     openInBrowser(url).catch((err) => {
@@ -3472,6 +3784,8 @@ if (require.main === module) {
     parseBundleFrames,
     outputPathFor,
     driverLogLine,
+    groupLabel,
+    sortGroupedInputs,
     resolveExportOpts,
   };
 }

@@ -31,9 +31,11 @@ USAGE
 
 ARGUMENTS
   paths     One or more HTML files or directories. With no paths, every
-            *.html in the current directory is processed (non-recursive).
-            Files inside an explicitly named directory are filtered with
-            the same rules: dotfiles and review.html are skipped.
+            *.html in the current directory is processed. Files inside an
+            explicitly named directory are filtered with the same rules:
+            dotfiles and review.html are skipped. export and bundle scan
+            the top level only; review also scans subdirectories and
+            groups the page by directory (see --no-recursive).
 
 EXPORT FLAGS
   --duration <Ns>     Capture duration. When passed explicitly, overrides
@@ -220,6 +222,11 @@ REVIEW FLAGS
   reloads on edits (no manual refresh). Works in any browser and in VS
   Code's built-in Simple Browser (⌘/Ctrl-click the printed URL in the
   VS Code terminal) — no extension required.
+  --no-recursive      Don't scan subdirectories. By default review walks
+                      the directories it is given (and the current
+                      directory) recursively, skipping dotted dirs,
+                      node_modules, output and captures, and groups the
+                      page under a heading per subdirectory.
   --no-serve          Don't run a server. Write a static page to a tmpfile
                       and open it via file:// (the pre-server behavior:
                       edits need a manual browser refresh). This is also
@@ -541,9 +548,48 @@ Scaling isn't perfectly linear — CPU contention slows individual captures slig
 `h2v review` builds a single HTML page that embeds every animation at the given paths as `<iframe>`s, with a Reset-all button. Useful for inspecting a directory of animations before exporting them, or for sharing one file with someone who doesn't have h2v installed.
 
 ```
+h2v review                # every animation under the current directory, recursively
 h2v review ./anims        # default: serve locally, open in browser, live-reload on edits
 h2v review bundle.html    # also accepts bundle files
 ```
+
+### Recursive discovery and directory grouping
+
+`h2v review` scans **recursively**: a directory argument (or the current directory, with no arguments) is walked all the way down. Animations found in a subdirectory are grouped under a heading named after that directory, in the order ungrouped-first, then groups alphabetically. So this tree:
+
+```
+animation-1.html
+title-cards/animation-2.html
+title-cards/animation-3.html
+demos/animation-4.html
+demos/animation-5.html
+```
+
+produces a page laid out as:
+
+```
+animation-1
+DEMOS ─────────────
+animation-4
+animation-5
+TITLE CARDS ───────
+animation-2
+animation-3
+```
+
+Headings are the directory name made readable — `title-cards` → **Title Cards**, `intro_clips` → **Intro Clips** — and nested directories join with a slash (`demos/intro_clips` → **Demos / Intro Clips**).
+
+Details:
+
+- **Skipped directories.** Dotted directories, `node_modules`, `output`, and `captures` are never descended into. The per-file skip rules are unchanged: dotfiles and `review.html`.
+- **One directory argument is the root**, so `h2v review ./anims` shows `anims/`'s own files flat (exactly as before) and only adds headings for its subdirectories. Pass **several** directories (`h2v review title-cards demos`) and each one becomes its own heading.
+- **Explicitly named files are never grouped** — they're listed first, in the order discovered.
+- `--no-recursive` restores the flat, top-level-only scan.
+- **`h2v export` and `h2v bundle` are still non-recursive** — recording writes files and is expensive, so widening what they pick up is opt-in by naming paths.
+
+### Sticky navigation
+
+Pages with more than a handful of animations get a sticky table of contents down the left side: one entry per animation, under its directory heading. Clicking an entry jumps to that card (landing clear of the sticky page header), and the entry for the card you're currently on is highlighted as you scroll. On viewports narrower than 900px the sidebar is hidden and the cards take the full width.
 
 ### Default: live server with auto-reload
 
@@ -585,7 +631,7 @@ The `data-h2v-recording` and `data-h2v-hide` hooks are **not** applied during re
 
 ## Limitations
 
-- **No recursion.** Directory expansion only finds `*.html` at the top level of the named directory.
+- **No recursion in `export` / `bundle`.** For those commands, directory expansion only finds `*.html` at the top level of the named directory. (`h2v review` *is* recursive — see [Recursive discovery and directory grouping](#recursive-discovery-and-directory-grouping).)
 - **Single-shot per page.** Each animation is recorded as a single pass over `[0, duration)`. If your animation loops, the recording stops at the configured duration regardless.
 - **Recording is slower than real-time (slowdown path).** With the default `--slowdown 6`, recording takes 6× the animation's run time — a 30-second animation needs three minutes of wall time. This applies to the default play driver; pages that expose a `window.seek(ms)` hook are auto-detected and scrubbed instead, which has no slowdown penalty (recording ≈ N screenshots) and ignores `--slowdown`. See [authoring.md](authoring.md#seek-hook--frame-perfect-recording-optional-advanced) for the seek contract.
 - **Web Workers, WebSockets, and `fetch` are not slowed.** The shim only wraps `setTimeout` / `setInterval` / `performance.now` / `Date.now` / `requestAnimationFrame` on the main thread. Animations driven by any of those uncommon sources will desync with the rest.

@@ -393,6 +393,137 @@ scenario('global theme switcher: hidden without ≥2 themes common to all', ({ t
     'no switcher when fewer than 2 themes are common to every animation');
 });
 
+// ---------------------------------------------------------------------------
+// 15-19. Recursive discovery + directory grouping (review only).
+// ---------------------------------------------------------------------------
+
+// Build the tree from the feature request:
+//   animation-1.html
+//   title-cards/{animation-2,animation-3}.html
+//   demos/{animation-4,animation-5}.html
+// plus directories that must never be descended into.
+function writeTree(tmp) {
+  const page = (name) =>
+    `<html><head><meta name="h2v-duration" content="1s"></head><body>${name}</body></html>`;
+  for (const dir of ['title-cards', 'demos', 'node_modules', 'output', '.hidden']) {
+    fs.mkdirSync(path.join(tmp, dir), { recursive: true });
+  }
+  fs.writeFileSync(path.join(tmp, 'animation-1.html'), page('animation-1'));
+  fs.writeFileSync(path.join(tmp, 'title-cards', 'animation-2.html'), page('animation-2'));
+  fs.writeFileSync(path.join(tmp, 'title-cards', 'animation-3.html'), page('animation-3'));
+  fs.writeFileSync(path.join(tmp, 'demos', 'animation-4.html'), page('animation-4'));
+  fs.writeFileSync(path.join(tmp, 'demos', 'animation-5.html'), page('animation-5'));
+  fs.writeFileSync(path.join(tmp, 'node_modules', 'vendored.html'), page('vendored'));
+  fs.writeFileSync(path.join(tmp, 'output', 'generated.html'), page('generated'));
+  fs.writeFileSync(path.join(tmp, '.hidden', 'secret.html'), page('secret'));
+}
+
+scenario('review recurses by default, grouping animations by directory', ({ tmp }) => {
+  writeTree(tmp);
+  const out = path.join(tmp, 'page.html');
+  const r = runH2v(['review', '--no-open', '--out', out], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const anims = extractAnimations(fs.readFileSync(out, 'utf-8'));
+  // Ungrouped first, then groups alphabetically — and nothing from
+  // node_modules/, output/ or the dotted directory.
+  assertEq(
+    anims.map((a) => (a.group || '-') + ':' + a.id),
+    [
+      '-:animation-1',
+      'demos:animation-4',
+      'demos:animation-5',
+      'title-cards:animation-2',
+      'title-cards:animation-3',
+    ],
+    'grouped, ordered discovery'
+  );
+  assertEq(anims[1].groupLabel, 'Demos', 'heading label for demos/');
+  assertEq(anims[3].groupLabel, 'Title Cards', 'heading label for title-cards/');
+  assertEq(anims[0].groupLabel, '', 'top-level animation gets no heading');
+});
+
+scenario('--no-recursive keeps the flat, top-level-only scan', ({ tmp }) => {
+  writeTree(tmp);
+  const out = path.join(tmp, 'page.html');
+  const r = runH2v(['review', '--no-open', '--no-recursive', '--out', out], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const anims = extractAnimations(fs.readFileSync(out, 'utf-8'));
+  assertEq(anims.map((a) => a.id), ['animation-1'], 'only the top-level file');
+});
+
+scenario('nested subdirectories become nested group labels', ({ tmp }) => {
+  fs.mkdirSync(path.join(tmp, 'demos', 'intro_clips'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'demos', 'intro_clips', 'deep.html'),
+    '<html><head><meta name="h2v-duration" content="1s"></head><body>deep</body></html>');
+  const out = path.join(tmp, 'page.html');
+  const r = runH2v(['review', '--no-open', '--out', out], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const anims = extractAnimations(fs.readFileSync(out, 'utf-8'));
+  assertEq(anims.length, 1, 'found the nested animation');
+  assertEq(anims[0].group, 'demos/intro_clips', 'group is the relative directory path');
+  assertEq(anims[0].groupLabel, 'Demos / Intro Clips', 'nested heading label');
+});
+
+scenario('several directory arguments each become their own group', ({ tmp }) => {
+  writeTree(tmp);
+  const out = path.join(tmp, 'page.html');
+  const r = runH2v(['review', 'title-cards', 'demos', '--no-open', '--out', out], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const anims = extractAnimations(fs.readFileSync(out, 'utf-8'));
+  assertEq(
+    anims.map((a) => (a.group || '-') + ':' + a.id),
+    [
+      'demos:animation-4',
+      'demos:animation-5',
+      'title-cards:animation-2',
+      'title-cards:animation-3',
+    ],
+    'each directory argument named as a group'
+  );
+  // A single directory argument is the root, so it stays flat (unchanged
+  // from the pre-recursion behavior).
+  const flatOut = path.join(tmp, 'flat.html');
+  const r2 = runH2v(['review', 'demos', '--no-open', '--out', flatOut], { cwd: tmp });
+  assert(r2.code === 0, `exit ${r2.code}; stderr: ${r2.stderr}`);
+  const flat = extractAnimations(fs.readFileSync(flatOut, 'utf-8'));
+  assertEq(flat.map((a) => a.group), ['', ''], 'single directory argument → no headings');
+});
+
+scenario('explicitly named files stay ungrouped', ({ tmp }) => {
+  writeTree(tmp);
+  const out = path.join(tmp, 'page.html');
+  const r = runH2v(
+    ['review', 'demos/animation-4.html', 'title-cards/animation-2.html', '--no-open', '--out', out],
+    { cwd: tmp }
+  );
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const anims = extractAnimations(fs.readFileSync(out, 'utf-8'));
+  assertEq(anims.map((a) => a.group), ['', ''], 'named files carry no group');
+});
+
+// ---------------------------------------------------------------------------
+// 20. Sticky navigation: the page ships a #toc sidebar and anchorable cards.
+// ---------------------------------------------------------------------------
+scenario('review page renders the sticky TOC sidebar', ({ tmp }) => {
+  writeTree(tmp);
+  const out = path.join(tmp, 'page.html');
+  const r = runH2v(['review', '--no-open', '--out', out], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const html = fs.readFileSync(out, 'utf-8');
+  assert(/<nav class="toc" id="toc"/.test(html), 'nav#toc element present');
+  assert(/class="layout"/.test(html), 'two-column layout wrapper present');
+  // Cards get anchor ids and the TOC links to them.
+  assert(/card\.id = 'anim-' \+ i/.test(html), 'cards get anchor ids');
+  assert(/link\.href = '#' \+ card\.id/.test(html), 'TOC entries link to their card');
+  assert(/addEventListener\('scroll', queueSpy/.test(html), 'scroll-spy wired up');
+});
+
 // Note: the default live-server path (serve + SSE live-reload) is exercised by
 // the standalone async integration test in tests/test-review-serve.js — the
 // sync scenario harness here can't drive a long-running server.
