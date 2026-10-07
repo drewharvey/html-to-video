@@ -618,6 +618,8 @@ Bundle frames (animations inside a single `ANIMATION_START` / `ANIMATION_END`-ma
 
 **Sizing.** Each preview renders its iframe at the animation's *natural* design viewport (from `<meta name="h2v-viewport">` or the bundle marker's `viewport=`, default `1280×720`) and then scales the whole frame down to fit its card. Because the page sees the exact viewport it was authored for, nothing is clipped — any aspect ratio works, including square (`1080×1080`) and vertical (`1080×1920`). Portrait clips are capped to stay within the window. Each card's header shows the animation's aspect ratio and resolution (e.g. `16:9 · 1920×1080`).
 
+**Names.** Each card is labelled with the animation's `<meta name="h2v-title">`, falling back to the document `<title>` and then to the filename made readable (`01-established-app.html` → **01 Established App**, ordering prefixes kept). Bundle frames use their marker's `title=`, as before. The raw filename or `bundle/id` is shown beside the name when it adds something beyond it. See [authoring.md](authoring.md) for the meta tag.
+
 **Per-card view controls.** Each card has two buttons in its header:
 
 - **Full screen** — opens that single animation full screen via the browser Fullscreen API, scaled to fill the display and letterboxed on black. Press `Esc` to exit.

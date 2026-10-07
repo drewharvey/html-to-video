@@ -170,4 +170,29 @@ scenario('sortGroupedInputs: ungrouped first, then group, then filename', () => 
   assertEq(new Set(groups).size, groups.filter((g, i) => g !== groups[i - 1]).length, 'each group contiguous');
 });
 
+// ===========================================================================
+// extractTitle / humanizeSegment — review display names.
+// ===========================================================================
+scenario('humanizeSegment: readable name, numeric prefix kept', () => {
+  assertEq(h2v.humanizeSegment('01-established-app'), '01 Established App', 'numbered file');
+  assertEq(h2v.humanizeSegment('rewrite_trap'), 'Rewrite Trap', 'underscores');
+  assertEq(h2v.humanizeSegment('solo'), 'Solo', 'single word');
+});
+
+scenario('extractTitle: h2v-title beats <title>, entities decoded', () => {
+  assertEq(
+    h2v.extractTitle('<head><meta name="h2v-title" content="The Reveal"><title>nope</title></head>'),
+    'The Reveal',
+    'meta wins'
+  );
+  assertEq(h2v.extractTitle('<head><title>F01 — The Established App</title></head>'),
+    'F01 — The Established App', 'document title');
+  assertEq(h2v.extractTitle('<head><title>A &amp; B &#39;C&#39;</title></head>'),
+    "A & B 'C'", 'entities decoded');
+  assertEq(h2v.extractTitle('<head><title>\n  spread  over\n  lines\n</title></head>'),
+    'spread over lines', 'whitespace collapsed');
+  assertEq(h2v.extractTitle('<head><title>   </title></head>'), null, 'blank title → null');
+  assertEq(h2v.extractTitle('<body>no head at all</body>'), null, 'no title → null');
+});
+
 summary();

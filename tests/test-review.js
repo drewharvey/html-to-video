@@ -348,9 +348,46 @@ scenario('single-file header omits the duplicate source span', ({ tmp }) => {
   assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
 
   const html = fs.readFileSync(out, 'utf-8');
-  // The guard that drops the duplicate must be present.
-  assert(/a\.source !== label/.test(html),
+  // The guard that drops the duplicate must be present. It compares on a
+  // normalized form, since a title-less file is now labelled with its
+  // filename made readable ("Solo" vs source "solo").
+  assert(/!sameName\(a\.source, label\)/.test(html),
     'expected the source-vs-name de-duplication guard');
+  const anims = extractAnimations(html);
+  assertEq(anims[0].title, 'Solo', 'title falls back to the humanized filename');
+  assertEq(anims[0].source, 'solo', 'source keeps the raw basename');
+});
+
+// ---------------------------------------------------------------------------
+// 21. Display names: standalone files get a real title like bundle frames do,
+//     instead of a raw filename id.
+// ---------------------------------------------------------------------------
+scenario('standalone file names: h2v-title > <title> > humanized filename', ({ tmp }) => {
+  const dur = '<meta name="h2v-duration" content="1s">';
+  fs.writeFileSync(path.join(tmp, '01-established-app.html'),
+    `<html><head>${dur}<title>F01 &amp; The Established App</title></head><body>a</body></html>`);
+  fs.writeFileSync(path.join(tmp, '02-growing-friction.html'),
+    `<html><head>${dur}<meta name="h2v-title" content="Growing Friction">` +
+    '<title>ignored when the meta is present</title></head><body>b</body></html>');
+  fs.writeFileSync(path.join(tmp, '03_rewrite-trap.html'),
+    `<html><head>${dur}</head><body>c</body></html>`);
+  const out = path.join(tmp, 'page.html');
+  const r = runH2v(['review', '--no-open', '--out', out], { cwd: tmp });
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const anims = extractAnimations(fs.readFileSync(out, 'utf-8'));
+  assertEq(
+    anims.map((a) => a.title),
+    [
+      'F01 & The Established App',  // <title>, entity-decoded
+      'Growing Friction',           // h2v-title wins over <title>
+      '03 Rewrite Trap',            // no title → humanized filename
+    ],
+    'title precedence'
+  );
+  // ids stay the raw basename — output paths and logs are unaffected.
+  assertEq(anims.map((a) => a.id),
+    ['01-established-app', '02-growing-friction', '03_rewrite-trap'], 'ids unchanged');
 });
 
 // ---------------------------------------------------------------------------

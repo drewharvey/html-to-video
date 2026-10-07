@@ -163,6 +163,11 @@ const META_THEMES_RE =
   /<meta\s+name=["']h2v-themes["']\s+content=["']([^"']*)["']\s*\/?>/i;
 const META_VIEWPORT_RE =
   /<meta\s+name=["']h2v-viewport["']\s+content=["']?(\d+)x(\d+)["']?\s*\/?>/i;
+// Single-file equivalent of a bundle marker's title= attribute. When absent
+// the document <title> is used instead (see extractTitle).
+const META_TITLE_RE =
+  /<meta\s+name=["']h2v-title["']\s+content=["']([^"']*)["']\s*\/?>/i;
+const DOC_TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i;
 const VIEWPORT_ATTR_RE = /^(\d+)x(\d+)$/;
 const DEFAULT_VIEWPORT = { w: 1280, h: 720 };
 const THEME_NAME_RE = /^[a-zA-Z0-9_-]+$/;
@@ -1022,23 +1027,57 @@ function listHtmlInDir(dir, { recursive = false } = {}) {
   return out;
 }
 
+// Title-case one path segment or filename: dashes and underscores become
+// spaces, each word is capitalized. Numeric ordering prefixes are kept —
+// "01-established-app" → "01 Established App" — so a numbered sequence still
+// reads in order. Used for both directory headings and the display name of a
+// standalone animation file.
+function humanizeSegment(segment) {
+  return segment
+    .replace(/[-_]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
+}
+
 // Human-readable heading for a group path: each segment title-cased, nested
 // segments joined with " / ". e.g. "title-cards" → "Title Cards",
 // "demos/intro_clips" → "Demos / Intro Clips".
 function groupLabel(group) {
-  return group
-    .split('/')
-    .filter(Boolean)
-    .map((seg) =>
-      seg
-        .replace(/[-_]+/g, ' ')
-        .trim()
-        .replace(/\s+/g, ' ')
-        .split(' ')
-        .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-        .join(' ')
-    )
-    .join(' / ');
+  return group.split('/').filter(Boolean).map(humanizeSegment).join(' / ');
+}
+
+// Display name for a standalone animation file — the single-file counterpart
+// of a bundle marker's title= attribute. Precedence:
+//   <meta name="h2v-title">  (explicit, the direct analogue of title=)
+//   <title>                  (every page has one; usually already the name)
+//   null                     (caller falls back to the humanized filename)
+// Without this, bundle frames showed their marker title ("The Established
+// App") while standalone files showed a raw filename id — the same animation
+// named two different ways depending on which mode it was reviewed in.
+function extractTitle(htmlText) {
+  const meta = htmlText.match(META_TITLE_RE);
+  const raw = meta ? meta[1] : (htmlText.match(DOC_TITLE_RE) || [])[1];
+  if (raw == null) return null;
+  const text = decodeBasicEntities(raw).replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
+// The handful of entities a <title> realistically carries. Titles are plain
+// text by the time they reach the review page (set via textContent), so this
+// only has to undo source-level escaping, not sanitize.
+function decodeBasicEntities(text) {
+  return text
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&');
 }
 
 // =========================================================================
@@ -2556,11 +2595,16 @@ ANIMATIONS.forEach((a, i) => {
   const name = document.createElement('span');
   name.className = 'name';
   name.textContent = label;
-  // Show the source only when it adds something beyond the name. For a
-  // single file id === source === name, so it would just be a duplicate;
-  // bundle frames carry "bundle/id", which is worth showing.
+  // Show the source only when it adds something beyond the name. A
+  // standalone file with no title of its own is labelled with its filename
+  // made readable ("01 Established App" for 01-established-app.html), so the
+  // source would just restate it — compare on a normalized form to catch
+  // that. A real title ("F01 — The Established App") or a bundle frame's
+  // "bundle/id" does add something, and shows.
+  const sameName = (x, y) =>
+    x.toLowerCase().replace(/[^a-z0-9]/g, '') === y.toLowerCase().replace(/[^a-z0-9]/g, '');
   let source = null;
-  if (a.source && a.source !== label) {
+  if (a.source && !sameName(a.source, label)) {
     source = document.createElement('span');
     source.className = 'source';
     source.textContent = a.source;
@@ -2993,8 +3037,11 @@ function buildReviewAnimations(inputs) {
       }
     } else {
       animations.push({
+        // Display name: explicit h2v-title / <title> if the page has one,
+        // otherwise the filename made readable — so a standalone file is
+        // labelled the same way a bundle frame's title= is.
         id: inputBase,
-        title: null,
+        title: extractTitle(text) || humanizeSegment(inputBase),
         group,
         source: inputBase,
         html: text,
@@ -3785,6 +3832,8 @@ if (require.main === module) {
     outputPathFor,
     driverLogLine,
     groupLabel,
+    humanizeSegment,
+    extractTitle,
     sortGroupedInputs,
     resolveExportOpts,
   };

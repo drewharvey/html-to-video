@@ -63,6 +63,18 @@ h2v will record one video per theme when the operator passes `--theme all`, or j
 
 Theme names match `[a-zA-Z0-9_-]+`. Pages without this meta are single-theme — h2v records them once, no theme handling.
 
+### `<meta name="h2v-title">` — display name (optional)
+
+Give the animation a human-readable name:
+
+```html
+<meta name="h2v-title" content="The Established App">
+```
+
+This is the single-file counterpart of a bundle marker's `title=` attribute. It's what `h2v review` prints on the card and in the sidebar, so the same animation is named the same way whether it's reviewed as a standalone file or as a frame of a bundle.
+
+When the meta is absent, h2v falls back to the document `<title>`, and then to the filename made readable — `01-established-app.html` → **01 Established App** (ordering prefixes are kept, so a numbered sequence still reads in order). The filename itself is still shown next to the name whenever it adds something, and the **id** used for output paths is always the raw basename, unaffected by any of this.
+
 ### `<meta name="h2v-viewport">` — design viewport (optional)
 
 Declare the resolution your animation was designed for:
@@ -121,7 +133,7 @@ h2v writes each animation to `output/<bundle-base>/<animation-id>.<ext>`.
 
 | Attribute | Notes |
 |---|---|
-| `title` | Human-readable label shown in console logs. Defaults to `id`. |
+| `title` | Human-readable label — shown on the `h2v review` card and in its sidebar, and in console logs. Defaults to `id`. The single-file equivalent is `<meta name="h2v-title">`. |
 | `themes` | Comma-separated theme list (e.g. `themes="dark,light"`). Same semantics as `<meta name="h2v-themes">` but per-animation. |
 | `viewport` | Design viewport in `WxH` format (e.g. `viewport="1080x1080"`). Same semantics as `<meta name="h2v-viewport">` but per-animation. Default: `1280x720`. |
 
