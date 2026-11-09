@@ -195,4 +195,22 @@ scenario('extractTitle: h2v-title beats <title>, entities decoded', () => {
   assertEq(h2v.extractTitle('<body>no head at all</body>'), null, 'no title → null');
 });
 
+// ===========================================================================
+// injectScrubFlag — review page sets window.__SCRUB__ before page scripts.
+// ===========================================================================
+scenario('injectScrubFlag: inside <head>, never ahead of the doctype', () => {
+  const TAG = '<script>window.__SCRUB__ = true;</script>';
+  assertEq(h2v.injectScrubFlag('<!DOCTYPE html><html><head><title>x</title></head></html>'),
+    '<!DOCTYPE html><html><head>' + TAG + '<title>x</title></head></html>', 'after <head>');
+  assertEq(h2v.injectScrubFlag('<html lang="en"><body>x</body></html>'),
+    '<html lang="en">' + TAG + '<body>x</body></html>', 'no head → after <html>');
+  assertEq(h2v.injectScrubFlag('<!doctype html>\n<div>x</div>'),
+    '<!doctype html>' + TAG + '\n<div>x</div>', 'fragment with doctype → after doctype');
+  assertEq(h2v.injectScrubFlag('<div>x</div>'), TAG + '<div>x</div>', 'bare fragment → prepended');
+  assertEq(h2v.injectScrubFlag('<html><header>h</header><head></head></html>'),
+    '<html><header>h</header><head>' + TAG + '</head></html>', '<header> is not <head>');
+  // Serialized into the review page's <script> — must not close it.
+  assert(!/<\/script/i.test(h2v.injectScrubFlag.toString()), 'source has no literal </script');
+});
+
 summary();

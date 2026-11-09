@@ -2165,6 +2165,31 @@ function safeJsonForScript(value) {
   return JSON.stringify(value, null, 2).replace(/<\/(?=[a-zA-Z!])/g, '<\\/');
 }
 
+// Insert `window.__SCRUB__ = true` into an animation's HTML so it runs before
+// any of the page's own scripts — the review-page counterpart of the
+// injection recordJob does before load. A seek-aware page then renders frame
+// 0 and waits instead of autoplaying, and the review page's scrub bar owns
+// its clock; for every other page the flag is inert. Placed just inside
+// <head> (else <html>, else after the doctype) so it never pushes content
+// ahead of the doctype and into quirks mode.
+//
+// This function is ALSO serialized into the review page's script via
+// toString() (srcdoc is assigned client-side, and "Actual size" must keep
+// the original autoplaying HTML) — so keep it self-contained ES5, with no
+// backticks or template placeholders, and keep the closing script tag
+// escaped as <\/script> so it can't end the outer page's <script>.
+function injectScrubFlag(html) {
+  var tag = '<script>window.__SCRUB__ = true;<\/script>';
+  var m = /<head\b[^>]*>/i.exec(html) || /<html\b[^>]*>/i.exec(html);
+  if (m) {
+    var at = m.index + m[0].length;
+    return html.slice(0, at) + tag + html.slice(at);
+  }
+  var d = /^\s*<!doctype[^>]*>/i.exec(html);
+  if (d) return d[0] + tag + html.slice(d[0].length);
+  return tag + html;
+}
+
 function buildReviewHtml(animations, { inline, liveReload }) {
   // Serialization for single-file animations (bundle frames have no filePath,
   // so they always inline as srcdoc):
@@ -2190,6 +2215,8 @@ function buildReviewHtml(animations, { inline, liveReload }) {
       // Declared themes (first = the animation's default = no data-theme).
       // The global theme switcher uses [0] to decide set-vs-remove per iframe.
       themes: a.themes || [],
+      // Seconds; the scrub bar's length for seek-aware animations.
+      duration: a.duration,
     };
     if (!inline && a.filePath) {
       return { ...base, src: pathToFileURL(a.filePath).href };
@@ -2425,6 +2452,54 @@ main {
   font-family: monospace; font-size: 11px; color: var(--muted);
   white-space: nowrap;
 }
+/* Transport bar (play/pause + scrub) under the stage. Only shown once the
+   animation is detected as seek-aware (exposes window.seek) — other pages
+   play on their own clock and can't be scrubbed. */
+.scrub {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; border-top: 1px solid var(--border);
+}
+.scrub[hidden] { display: none; }
+/* Seek-aware previews toggle play/pause on click. */
+.frame-stage.seekable { cursor: pointer; }
+/* Play/pause flash: a round badge that pops up in the middle of the preview
+   when playback is toggled by clicking it or pressing Space (not from the
+   transport button, which is its own feedback) — like a video player. Shows
+   the state just entered. Sits in the stage, outside the scaled iframe, so
+   it's the same size for every animation and in full screen. */
+.toggle-flash {
+  position: absolute; left: 50%; top: 50%;
+  width: 68px; height: 68px; margin: -34px 0 0 -34px;
+  border-radius: 50%; background: rgba(0, 0, 0, 0.6); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none; opacity: 0; z-index: 1;
+}
+.toggle-flash svg { width: 30px; height: 30px; display: block; fill: currentColor; }
+.toggle-flash.is-play svg { margin-left: 3px; } /* optical centre of the triangle */
+.toggle-flash.show { animation: h2v-toggle-flash 700ms ease-out forwards; }
+@keyframes h2v-toggle-flash {
+  0%   { opacity: 0; transform: scale(0.85); }
+  15%  { opacity: 1; transform: scale(1); }
+  70%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toggle-flash.show { animation-name: h2v-toggle-flash-fade; }
+  @keyframes h2v-toggle-flash-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+}
+.scrub-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; flex: none; padding: 0;
+  background: var(--btn-bg); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); cursor: pointer;
+}
+.scrub-btn:hover { background: var(--btn-hover); }
+.scrub-btn svg { width: 14px; height: 14px; display: block; }
+.scrub-range { flex: 1; min-width: 0; margin: 0; accent-color: var(--text); cursor: pointer; }
+.scrub-time {
+  font-family: monospace; font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 </style>
 </head>
 <body>
@@ -2442,11 +2517,18 @@ main {
 <script>
 const ANIMATIONS = ${safeJsonForScript(serialized)};
 
+// Same function as injectScrubFlag in cli.js (serialized via toString), so
+// inlined animations load with window.__SCRUB__ = true and a seek-aware page
+// waits for the scrub bar instead of autoplaying. file:// (src) animations
+// can't be injected — or reached cross-origin — so they keep autoplaying and
+// get no scrub bar.
+${injectScrubFlag.toString()}
+
 function loadInto(iframe, a) {
   if (a.src) {
     iframe.src = a.src;
   } else {
-    iframe.srcdoc = a.html;
+    iframe.srcdoc = injectScrubFlag(a.html);
   }
 }
 
@@ -2458,11 +2540,16 @@ function reload(iframe, a) {
     requestAnimationFrame(() => { iframe.src = a.src; });
   } else {
     // Reassigning srcdoc always re-parses the inlined HTML.
-    iframe.srcdoc = a.html;
+    iframe.srcdoc = injectScrubFlag(a.html);
   }
 }
 
 const main = document.getElementById('cards');
+// Per-card scrub controllers, index-aligned with ANIMATIONS / .card.
+const SCRUBBERS = [];
+// Index of the card the reader is on (kept by the scroll-spy below); the
+// target for Space when focus isn't inside a card.
+let spyIdx = 0;
 // Sticky left-hand table of contents: one entry per animation, grouped by
 // directory, built in the same pass as the cards so the two stay in sync.
 const toc = document.getElementById('toc');
@@ -2484,6 +2571,199 @@ window.addEventListener('resize', syncHeaderHeight);
 // a dependency. stroke="currentColor" makes them inherit the button color.
 const ICON_MAXIMIZE = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
 const ICON_EXTERNAL = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/></svg>';
+
+const ICON_PLAY = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
+const ICON_PAUSE = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg>';
+
+// Scrub bar for seek-aware animations. The review page owns the clock: it
+// plays by calling the iframe's window.seek(ms) from its own rAF loop, and
+// the range input seeks directly. Re-armed on every iframe load (lazy load,
+// Reset all), since the animation's window is replaced each time.
+//
+// A paused position is kept in sessionStorage per animation, so a live
+// reload after editing a file lands back on the frame being inspected
+// instead of replaying from 0. Playing (or Reset all) clears it.
+const SCRUB_FPS = 60; // arrow keys on the range step one frame at export's default fps
+const FRAME_MS = 1000 / SCRUB_FPS;
+// Clicks on these inside an animation operate the animation's own controls,
+// so they must not also toggle playback.
+const INTERACTIVE_SEL =
+  'a, button, input, select, textarea, label, summary, [contenteditable], [role="button"], [tabindex]';
+function scrubKey(a) { return 'h2v-scrub:' + (a.source || a.id); }
+function loadScrubState(a) {
+  try { return JSON.parse(sessionStorage.getItem(scrubKey(a)) || 'null'); } catch (e) { return null; }
+}
+function saveScrubState(a, t) {
+  try {
+    if (t == null) sessionStorage.removeItem(scrubKey(a));
+    else sessionStorage.setItem(scrubKey(a), JSON.stringify({ t: t }));
+  } catch (e) { /* storage unavailable — position just isn't kept */ }
+}
+function fmtTime(ms) { return (ms / 1000).toFixed(2); }
+
+// Space toggles playback, like a video player. Text fields and the
+// animation's own / the page's other controls keep Space for themselves
+// (a focused button activates on Space); the transport button and slider
+// are taken over so Space shows the flash there too.
+function isSpace(e) { return e.key === ' ' || e.code === 'Space'; }
+function keepsSpace(el) {
+  if (!el || !el.closest) return false;
+  if (el.closest('.scrub-btn, .scrub-range')) return false;
+  return !!el.closest(INTERACTIVE_SEL);
+}
+
+function attachScrubber(iframe, a, bar, stage) {
+  const dur = Math.max(1, Math.round((a.duration || 0) * 1000));
+  const btn = bar.querySelector('.scrub-btn');
+  const range = bar.querySelector('.scrub-range');
+  const time = bar.querySelector('.scrub-time');
+  range.min = 0;
+  range.max = dur;
+  // step="any", not one frame: a fractional step (1000/60) times the frame
+  // count lands a hair past max in floating point, so the browser snaps the
+  // final value back a frame and the thumb never reaches the end. Frame
+  // stepping is done by the keydown handler below instead.
+  range.step = 'any';
+  const st = { win: null, t: 0, playing: false, base: 0, raf: 0, resume: false };
+
+  function render(t) {
+    st.t = Math.max(0, Math.min(dur, t));
+    try { st.win.seek(st.t); } catch (e) { console.error('[h2v review] seek() threw', e); }
+    range.value = st.t;
+    time.textContent = fmtTime(st.t) + ' / ' + fmtTime(dur) + ' s';
+  }
+  function setPlaying(p) {
+    st.playing = p;
+    btn.innerHTML = p ? ICON_PAUSE : ICON_PLAY;
+    btn.title = p ? 'Pause' : 'Play';
+    btn.setAttribute('aria-label', btn.title);
+  }
+  function tick(now) {
+    if (!st.playing || !st.win) return;
+    const t = now - st.base;
+    if (t >= dur) { render(dur); pause(); return; }
+    render(t);
+    st.raf = requestAnimationFrame(tick);
+  }
+  function play() {
+    if (!st.win) return;
+    if (st.t >= dur) st.t = 0; // at the end, play restarts
+    st.base = performance.now() - st.t;
+    setPlaying(true);
+    saveScrubState(a, null);
+    cancelAnimationFrame(st.raf);
+    st.raf = requestAnimationFrame(tick);
+  }
+  function pause() {
+    setPlaying(false);
+    cancelAnimationFrame(st.raf);
+    saveScrubState(a, st.t);
+  }
+
+  const flashEl = document.createElement('div');
+  flashEl.className = 'toggle-flash';
+  flashEl.setAttribute('aria-hidden', 'true');
+  stage.appendChild(flashEl);
+  function flash() {
+    flashEl.innerHTML = st.playing ? ICON_PLAY : ICON_PAUSE;
+    flashEl.classList.toggle('is-play', st.playing);
+    flashEl.classList.remove('show');
+    void flashEl.offsetWidth; // restart the animation on rapid toggles
+    flashEl.classList.add('show');
+  }
+  // withFlash: clicks on the preview and Space pop the centre icon; the
+  // transport button doesn't (it already shows the new state).
+  function toggle(withFlash) {
+    if (!st.win) return;
+    st.playing ? pause() : play();
+    if (withFlash) flash();
+  }
+  btn.addEventListener('click', () => toggle(false));
+  // A focused button fires its click on Space keyup; the page-level Space
+  // handler already toggled on keydown, so swallow that second activation.
+  btn.addEventListener('keyup', (e) => { if (isSpace(e)) e.preventDefault(); });
+  // Click anywhere on the preview to toggle: the letterbox area of the stage
+  // here, and inside the animation via a listener on its document (iframe
+  // clicks never bubble to this page) — added in the load handler.
+  stage.addEventListener('click', (e) => { if (e.target === stage) toggle(true); });
+  function onFrameClick(e) {
+    if (e.button !== 0 || (e.target.closest && e.target.closest(INTERACTIVE_SEL))) return;
+    toggle(true);
+  }
+  // After a click on the animation, focus is inside its iframe, whose key
+  // events never reach this page — so Space is handled there as well.
+  function onFrameKey(e) {
+    if (!isSpace(e) || e.repeat || keepsSpace(e.target)) return;
+    e.preventDefault();
+    toggle(true);
+  }
+  // Arrow keys step exactly one frame (Shift: one second); Home/End jump.
+  range.addEventListener('keydown', (e) => {
+    const d = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[e.key];
+    let t = null;
+    if (d) t = Math.round(st.t / FRAME_MS) * FRAME_MS + d * (e.shiftKey ? 1000 : FRAME_MS);
+    else if (e.key === 'Home') t = 0;
+    else if (e.key === 'End') t = dur;
+    if (t == null) return;
+    e.preventDefault();
+    range.value = Math.max(0, Math.min(dur, t));
+    range.dispatchEvent(new Event('input'));
+    range.dispatchEvent(new Event('change'));
+  });
+  // Dragging pauses; releasing resumes if it was playing (video-player style).
+  range.addEventListener('pointerdown', () => {
+    st.resume = st.playing;
+    if (st.playing) pause();
+  });
+  range.addEventListener('input', () => {
+    render(parseFloat(range.value));
+    if (st.playing) st.base = performance.now() - st.t; // keyboard seek while playing
+    else saveScrubState(a, st.t);
+  });
+  // On release, settle on the frame the way export reaches it: replay seek()
+  // frame-by-frame from 0 first (cheap: ~1 ms per call). Some seek engines
+  // carry incremental state, so a cold jump renders differently than
+  // arriving sequentially — same reason as captureSeekRange's warm-up. The
+  // drag itself stays cold-jump so it remains responsive.
+  range.addEventListener('change', () => {
+    if (st.win) {
+      try {
+        for (let i = 0; i * FRAME_MS < st.t; i++) st.win.seek(i * FRAME_MS);
+      } catch (e) { /* render() below reports it */ }
+      render(st.t);
+    }
+    if (st.resume) { st.resume = false; play(); }
+  });
+
+  iframe.addEventListener('load', () => {
+    cancelAnimationFrame(st.raf);
+    st.playing = false;
+    st.win = null;
+    // Seek-aware = exposes window.seek, same detection as h2v export. A
+    // cross-origin (file://) frame throws on access → no scrub bar.
+    try {
+      const w = iframe.contentWindow;
+      if (w && typeof w.seek === 'function') st.win = w;
+    } catch (e) { st.win = null; }
+    bar.hidden = !st.win;
+    stage.classList.toggle('seekable', !!st.win);
+    if (!st.win) return;
+    try {
+      st.win.document.addEventListener('click', onFrameClick);
+      st.win.document.addEventListener('keydown', onFrameKey);
+    } catch (e) { /* unreachable doc */ }
+    const saved = loadScrubState(a);
+    if (saved && typeof saved.t === 'number') {
+      render(saved.t);
+      setPlaying(false);
+    } else {
+      render(0);
+      play(); // autoplay once, as the page itself would outside __SCRUB__
+    }
+  });
+
+  return { toggle, seekable: () => !!st.win };
+}
 
 // Reduced aspect-ratio label, e.g. 1920×1080 → "16:9", 1080×1920 → "9:16".
 function gcd(a, b) { return b ? gcd(b, a % b) : a; }
@@ -2623,8 +2903,18 @@ ANIMATIONS.forEach((a, i) => {
   iframe.setAttribute('loading', 'lazy');
   iframe.style.setProperty('--anim-w', a.viewport.w);
   iframe.style.setProperty('--anim-h', a.viewport.h);
-  loadInto(iframe, a);
   stage.appendChild(iframe);
+
+  const scrub = document.createElement('div');
+  scrub.className = 'scrub';
+  scrub.hidden = true;
+  scrub.innerHTML =
+    '<button type="button" class="scrub-btn"></button>' +
+    '<input type="range" class="scrub-range" aria-label="Scrub ' + label.replace(/"/g, '&quot;') + '">' +
+    '<span class="scrub-time"></span>';
+  // Listener before the first load, so a fast (cached) load isn't missed.
+  SCRUBBERS[i] = attachScrubber(iframe, a, scrub, stage);
+  loadInto(iframe, a);
 
   const actions = document.createElement('div');
   actions.className = 'card-actions';
@@ -2644,7 +2934,7 @@ ANIMATIONS.forEach((a, i) => {
   head.append(name);
   if (source) head.append(source);
   head.append(dims, actions);
-  card.append(head, stage);
+  card.append(head, stage, scrub);
   card.id = 'anim-' + i;
   main.appendChild(card);
   fitObserver.observe(stage);
@@ -2688,6 +2978,7 @@ if (tocLinks.length) {
     }
     if (idx === activeIdx) return;
     activeIdx = idx;
+    spyIdx = idx;
     tocLinks.forEach((l, i) => l.classList.toggle('active', i === idx));
     // Keep the highlighted entry in view when the TOC itself scrolls.
     const active = tocLinks[idx];
@@ -2740,8 +3031,23 @@ if (themeSwitch) {
   });
 }
 
+// Space: toggle the full-screen animation, else the card holding focus, else
+// the card the reader is on. Only seek-aware cards respond.
+document.addEventListener('keydown', (e) => {
+  if (!isSpace(e) || e.repeat || e.metaKey || e.ctrlKey || e.altKey || keepsSpace(e.target)) return;
+  const cards = [...document.querySelectorAll('#cards .card')];
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  const card = (fsEl && fsEl.closest && fsEl.closest('.card')) ||
+    (e.target && e.target.closest && e.target.closest('.card')) || cards[spyIdx];
+  const ctrl = SCRUBBERS[cards.indexOf(card)];
+  if (!ctrl || !ctrl.seekable()) return;
+  e.preventDefault(); // also stops Space from scrolling the page
+  ctrl.toggle(true);
+});
+
 document.getElementById('resetAll').addEventListener('click', () => {
   document.querySelectorAll('.card').forEach((card, i) => {
+    saveScrubState(ANIMATIONS[i], null); // replay seek-aware ones from 0
     reload(card.querySelector('iframe'), ANIMATIONS[i]);
   });
   // Reloading re-renders each animation at its own default theme, so reset the
@@ -3030,6 +3336,7 @@ function buildReviewAnimations(inputs) {
           // Declared themes (first = default = no data-theme attribute).
           // Drives the global theme switcher in buildReviewHtml.
           themes: frame.declaredThemes || [],
+          duration: frame.durationSeconds,
           // Bundle frames are slices of a parent file with no individual
           // path on disk. In live mode they fall back to srcdoc inlining.
           filePath: null,
@@ -3047,6 +3354,7 @@ function buildReviewAnimations(inputs) {
         html: text,
         viewport: extractViewport(text) || DEFAULT_VIEWPORT,
         themes: extractDeclaredThemes(text),
+        duration: extractMetaDuration(text) || DEFAULTS.duration,
         // Absolute path so the review HTML (typically in os.tmpdir())
         // can address the source file via a file:// URL.
         filePath: path.resolve(inputPath),
@@ -3827,6 +4135,7 @@ if (require.main === module) {
     buildEncodeArgs,
     buildGifFilterComplex,
     safeJsonForScript,
+    injectScrubFlag,
     extractViewport,
     parseBundleFrames,
     outputPathFor,

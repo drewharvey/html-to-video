@@ -335,6 +335,34 @@ scenario('review page renders full-screen + actual-size buttons per card', ({ tm
 });
 
 // ---------------------------------------------------------------------------
+// 12b. Scrub bar for seek-aware animations: duration reaches ANIMATIONS,
+//      inlined animations load with __SCRUB__ injected, and the page carries
+//      the window.seek detection + play/pause icons. (Behaviour is verified
+//      in a real browser; this guards the generated structure.)
+// ---------------------------------------------------------------------------
+scenario('review page carries a scrub bar for seek-aware animations', ({ tmp }) => {
+  const file = path.join(tmp, 'clip.html');
+  fs.writeFileSync(file,
+    '<html><head><meta name="h2v-duration" content="2.5s"></head><body><script>window.seek=function(){}</script></body></html>');
+  const plain = path.join(tmp, 'plain.html');
+  fs.writeFileSync(plain, '<html><head></head><body>x</body></html>');
+  const out = path.join(tmp, 'review.html');
+  const r = runH2v(['review', file, plain, '--no-open', '--out', out]);
+  assert(r.code === 0, `exit ${r.code}; stderr: ${r.stderr}`);
+
+  const html = fs.readFileSync(out, 'utf-8');
+  const anims = extractAnimations(html);
+  const byId = Object.fromEntries(anims.map((a) => [a.id, a]));
+  assertEq(byId.clip.duration, 2.5, 'h2v-duration meta → duration');
+  assertEq(byId.plain.duration, 10, 'no meta → default duration (DEFAULTS.duration)');
+  assert(html.includes('function injectScrubFlag'), 'expected injectScrubFlag serialized into the page');
+  assert(html.includes('srcdoc = injectScrubFlag(a.html)'), 'expected inlined animations to load with __SCRUB__');
+  assert(html.includes("typeof w.seek === 'function'"), 'expected window.seek detection');
+  assert(html.includes('scrub-range'), 'expected a scrub range input');
+  assert(html.includes('points="6 3 20 12 6 21 6 3"'), 'expected the inlined Lucide "play" icon');
+});
+
+// ---------------------------------------------------------------------------
 // 13. Header de-duplication: for a single file id === source === name, so
 //     the source span (which would just repeat the title) is omitted.
 //     Bundle frames carry a "bundle/id" source, which IS shown.

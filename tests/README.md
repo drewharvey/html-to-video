@@ -78,6 +78,10 @@ The canonical sync invariant. Exports `tests/sync-test.html` and verifies all **
 
 It measures each bar's fill fraction at the t=0.5s frame and asserts they're all within a tight **lockstep spread** of each other (the real "in step" invariant), plus a loose absolute window and a fully-filled check at t=1.0s. The relative check is robust to uniform capture drift on a loaded CI runner while still catching the structural shim bugs (e.g. the historical rAF double-slow, `Animation.setPlaybackRate` disconnect), which throw one source off by ≥0.4. The test exports at `--slowdown 12` (not the production default of 6): shim correctness is a scale-invariant ratio, and the higher slowdown gives each source more wall-time per captured frame, removing CI flakiness from `setInterval` starvation.
 
+### test-review-scrub.js (`npm run test:review-scrub`)
+
+Drives the `h2v review` scrub bar in headless Chrome. Builds a portable review page (`--out`) from two tmp fixtures — a seek-aware one (records its last `seek()` ms and an order-dependent step counter) and a plain one — and asserts: the bar shows only for `window.seek` pages; `__SCRUB__` is set before page scripts; autoplay runs to the **final** frame (guards the fractional-`step` snap-back); click-to-toggle inside the animation and on the stage, but not on the animation's own controls; Home/End/arrow/Shift+arrow frame stepping; the release-time warm-up replay from frame 0; the centre play/pause flash (shown for preview clicks and Space, not the transport button); Space-to-toggle from the transport button, inside the animation, and with nothing focused (without scrolling the page), but not from the animation's own controls; drag-pauses/release-resumes; the paused position surviving a reload; and Reset all clearing it. Own async runner (like `test-review-serve.js`), ~5 s.
+
 ### test-seek.js (`npm run test:seek`)
 
 End-to-end validation of the seek (scrub) driver and frame-sharding. 5 scenarios:

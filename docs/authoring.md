@@ -260,6 +260,10 @@ If that's not how your page is built, don't add the hook — the default play pa
 
 vs. `driver: slowdown 6×` for the play path. If you added the hook but see `slowdown`, the page isn't being detected — check that `window.seek` is a function at load time and that `__SCRUB__` actually suppresses autoplay.
 
+### Scrubbing in `h2v review`
+
+`h2v review` uses the same hook: a seek-aware animation gets a play/pause button and a scrub slider under its preview, so you can stop on any frame. Review sets `window.__SCRUB__` too, so an animation that honours it is played by the review page (via `seek()`) rather than by its own autoplay loop — another reason to make sure `__SCRUB__` really suppresses autoplay. The slider spans the `h2v-duration` meta.
+
 A worked fixture lives at [`../tests/seek-test.html`](../tests/seek-test.html).
 
 ---
